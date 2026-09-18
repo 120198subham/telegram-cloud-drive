@@ -1,6 +1,7 @@
 # Environment & Secrets
 .env
-*.env.*
+.env.*
+!.env.example
 
 # Telegram MTProto session files
 *.session

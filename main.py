@@ -1,7 +1,9 @@
 import os
 import time
 import asyncio
+import secrets
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
@@ -19,6 +21,11 @@ from config import (
     CHANNEL_ID,
     TODO_CHANNEL_ID,
     SOFTWARE_CHANNEL_ID,
+    OTP_MAX_REQUESTS_PER_MIN,
+    OTP_EXPIRY_SECONDS,
+    OTP_MAX_ATTEMPTS,
+    OTP_LOCKOUT_SECONDS,
+    SESSION_COOKIE_AGE,
     is_telegram_configured,
 )
 from database import (
@@ -38,25 +45,42 @@ from database import (
     add_note,
     get_notes,
     delete_note,
+    check_ip_lockout,
+    lockout_ip,
+    check_rate_limit,
+    create_otp_session,
+    cancel_otp_sessions,
+    get_active_otp_session,
+    increment_otp_attempts,
+    mark_otp_session_used,
+    hash_otp_code,
 )
 from telegram_client import storage_client
+
+def get_client_ip(request: Request) -> str:
+    """Extract real client IP address considering proxy headers."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "127.0.0.1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     await storage_client.initialize()
-    # Auto-import any existing channel files on startup
-    try:
-        await storage_client.sync_channel_messages()
-    except Exception as e:
-        pass
+    # Auto-import any existing channel files in background so server binds immediately
+    asyncio.create_task(storage_client.sync_channel_messages())
     yield
     await storage_client.close()
 
+# Initialize FastAPI app
 app = FastAPI(
-    title="Telegram Cloud & Productivity Hub",
-    description="Multi-tab cloud drive and task hub backed by Telegram MTProto channels.",
-    version="2.0.0",
+    title="SS Workspace Vault",
+    description="Secure dynamic OTP protected personal cloud storage & workspace platform powered by Telegram MTProto.",
+    version="2.5.0",
     lifespan=lifespan
 )
 
@@ -69,15 +93,27 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition", "Content-Type", "Accept-Ranges"],
 )
 
-# Authentication Middleware: Protects API with password "Allow" (Softwares tab is public)
+# Authentication Middleware: Protects API with dynamic OTP / session cookie (Softwares tab is public)
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     # Public endpoints
-    if not path.startswith("/api/") or path in ["/api/auth/verify", "/api/status", "/api/prefetch"] or path.startswith("/api/upload-progress"):
+    if (
+        not path.startswith("/api/")
+        or path in [
+            "/api/auth/verify",
+            "/api/auth/send-otp",
+            "/api/auth/verify-otp",
+            "/api/auth/cancel-otp",
+            "/api/auth/status",
+            "/api/status",
+            "/api/prefetch",
+        ]
+        or path.startswith("/api/upload-progress")
+    ):
         return await call_next(request)
 
-    # Public Softwares category: no password required to list, upload, or download software
+    # Public Softwares category: no password/OTP required to list, upload, or download software
     if path == "/api/files" and request.method == "GET" and request.query_params.get("category") == "software":
         return await call_next(request)
 
@@ -97,17 +133,32 @@ async def auth_middleware(request: Request, call_next):
     header_auth = request.headers.get("X-Auth-Token", "")
     query_auth = request.query_params.get("auth", "")
 
-    if cookie_auth.lower() == "allow" or header_auth.lower() == "allow" or query_auth.lower() == "allow":
+    if (
+        cookie_auth.lower() in ["allow", "authenticated"]
+        or header_auth.lower() in ["allow", "authenticated"]
+        or query_auth.lower() in ["allow", "authenticated"]
+    ):
         return await call_next(request)
 
     return JSONResponse(
         status_code=401,
-        content={"detail": "Authentication required. Please enter password 'Allow'."}
+        content={"detail": "Authentication required. Please verify via Telegram OTP."}
     )
 
 # Pydantic request models
 class AuthRequest(BaseModel):
     password: str
+
+class OtpSendRequest(BaseModel):
+    tab: Optional[str] = "Workspace Vault"
+    action: Optional[str] = "access"
+    target_name: Optional[str] = None
+
+class OtpVerifyRequest(BaseModel):
+    code: str
+    tab: Optional[str] = None
+    action: Optional[str] = None
+    target_name: Optional[str] = None
 
 class TodoCreate(BaseModel):
     title: str
@@ -140,34 +191,254 @@ async def auto_prefetch(force: bool = False) -> int:
 
 # ==================== AUTH & STATUS ====================
 
+@app.get("/api/auth/status")
+async def get_auth_status(request: Request, tab: Optional[str] = None):
+    """Retrieve current client IP lockout and OTP countdown telemetry."""
+    ip = get_client_ip(request)
+    is_locked, remaining_lockout = await check_ip_lockout(ip)
+    active_otp = await get_active_otp_session(ip)
+    remaining_otp = 0
+    attempts_used = 0
+    active_tab = None
+    active_action = None
+    active_target_name = None
+    cross_tab = False
+
+    if active_otp:
+        now_dt = datetime.now(timezone.utc)
+        exp_dt = datetime.fromisoformat(active_otp["expires_at"])
+        remaining_otp = max(0, int((exp_dt - now_dt).total_seconds()))
+        attempts_used = active_otp.get("attempts", 0)
+        active_tab = active_otp.get("tab")
+        active_action = active_otp.get("action")
+        active_target_name = active_otp.get("target_name")
+        if tab and active_tab and tab.strip().lower() != active_tab.strip().lower():
+            cross_tab = True
+
+    return {
+        "ip": ip,
+        "is_locked": is_locked,
+        "lockout_remaining_seconds": remaining_lockout,
+        "has_active_otp": remaining_otp > 0 and not cross_tab,
+        "otp_remaining_seconds": remaining_otp if not cross_tab else 0,
+        "attempts_used": attempts_used,
+        "max_attempts": OTP_MAX_ATTEMPTS,
+        "tab": active_tab,
+        "action": active_action,
+        "target_name": active_target_name,
+        "cross_tab": cross_tab,
+        "is_demo": storage_client.is_demo,
+    }
+
+@app.post("/api/auth/send-otp")
+async def send_otp(request: Request, payload: Optional[OtpSendRequest] = None):
+    """
+    Generate and dispatch a 6-digit OTP code to the dedicated security channel.
+    Enforces:
+    - 10-minute IP lockout if previously locked out
+    - Max 4 requests per minute (Rate Limit)
+    - 60 seconds validity
+    - Immediate cancellation of prior OTP messages from Telegram channel
+    - Unique per-tab binding
+    """
+    ip = get_client_ip(request)
+    is_locked, remaining_lockout = await check_ip_lockout(ip)
+    if is_locked:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Security Lockout: Your IP is locked out. Please wait {remaining_lockout} seconds."
+        )
+
+    allowed, retry_after = await check_rate_limit(ip, max_requests=OTP_MAX_REQUESTS_PER_MIN, window_seconds=60)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded (max {OTP_MAX_REQUESTS_PER_MIN}/min). Please wait {retry_after} seconds before requesting a new code."
+        )
+
+    target_tab = (payload.tab if payload and payload.tab else "Workspace Vault").strip()
+    target_action = (payload.action if payload and payload.action else "access").strip()
+    target_name = payload.target_name.strip() if payload and payload.target_name else None
+
+    # Cancel previous OTP in Telegram and in database for this IP
+    if storage_client:
+        await storage_client.cancel_active_otp(ip)
+    await cancel_otp_sessions(ip)
+
+    # Generate 6-digit numeric OTP
+    code = f"{secrets.randbelow(900000) + 100000}"
+
+    # Record in SQLite session with unique tab binding
+    session_data = await create_otp_session(
+        ip=ip,
+        code=code,
+        expiry_seconds=OTP_EXPIRY_SECONDS,
+        tab=target_tab,
+        action=target_action,
+        target_name=target_name
+    )
+
+    context = {
+        "tab": target_tab,
+        "action": target_action,
+        "target_name": target_name
+    }
+
+    # Dispatch to dedicated Telegram OTP channel
+    success, msg = await storage_client.send_otp_to_owner(code, ip, expiry_seconds=OTP_EXPIRY_SECONDS, context_info=context)
+    if not success and not storage_client.is_demo:
+        raise HTTPException(status_code=500, detail=msg)
+
+    return {
+        "success": True,
+        "message": msg if not storage_client.is_demo else f"Demo Mode: Verification code is {code}",
+        "expires_in": OTP_EXPIRY_SECONDS,
+        "tab": target_tab,
+        "action": target_action,
+        "target_name": target_name,
+        "demo_code": code if storage_client.is_demo else None
+    }
+
+@app.post("/api/auth/verify-otp")
+async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Response):
+    """
+    Verify 6-digit OTP code.
+    Enforces:
+    - Cross-tab cancellation: OTP issued for one tab is strictly forbidden on another tab and immediately cancelled!
+    - Option 3: 5 failed attempts triggers 10-minute lockout + Security Alert to owner
+    - 1-minute expiration
+    - 24-hour session cookie issuance
+    """
+    ip = get_client_ip(request)
+    is_locked, remaining_lockout = await check_ip_lockout(ip)
+    if is_locked:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Security Lockout: Your IP is locked out. Try again in {remaining_lockout} seconds."
+        )
+
+    active_otp = await get_active_otp_session(ip)
+    if not active_otp:
+        raise HTTPException(
+            status_code=400,
+            detail="No active OTP found. The code may have expired or been cancelled. Please request a fresh OTP."
+        )
+
+    # Cross-tab OTP check: verify target tab matches issued tab
+    if payload.tab and active_otp.get("tab"):
+        req_tab = payload.tab.strip().lower()
+        issued_tab = active_otp["tab"].strip().lower()
+        if req_tab != issued_tab:
+            # Cross-tab mismatch detected! Cancel active OTP and purge Telegram message immediately
+            await cancel_otp_sessions(ip)
+            if storage_client:
+                await storage_client.cancel_active_otp(ip)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cross-tab OTP rejected: This OTP was issued for '{active_otp['tab']}' and has been cancelled. Please request a fresh OTP for '{payload.tab}'."
+            )
+
+    # Action consistency check
+    if payload.action and active_otp.get("action"):
+        if payload.action.strip().lower() != active_otp["action"].strip().lower():
+            await cancel_otp_sessions(ip)
+            if storage_client:
+                await storage_client.cancel_active_otp(ip)
+            raise HTTPException(
+                status_code=400,
+                detail="Security mismatch: This OTP was issued for a different action and has been cancelled."
+            )
+
+    # Check 1-minute expiration
+    now_dt = datetime.now(timezone.utc)
+    exp_dt = datetime.fromisoformat(active_otp["expires_at"])
+    if now_dt > exp_dt:
+        await mark_otp_session_used(active_otp["id"])
+        if storage_client:
+            await storage_client.cancel_active_otp(ip)
+        raise HTTPException(
+            status_code=400,
+            detail="OTP code has expired (validity was 1 minute). Please request a new code."
+        )
+
+    clean_code = payload.code.strip()
+    provided_hash = hash_otp_code(clean_code)
+    if provided_hash == active_otp["code_hash"]:
+        # Success!
+        await mark_otp_session_used(active_otp["id"])
+        if storage_client:
+            await storage_client.cancel_active_otp(ip)
+        response.set_cookie(
+            key="tg_auth",
+            value="Allow",
+            max_age=SESSION_COOKIE_AGE,
+            httponly=False,
+            samesite="lax"
+        )
+        return {
+            "success": True,
+            "tab": active_otp.get("tab"),
+            "action": active_otp.get("action"),
+            "message": "Authentication successful. Access granted for 24 hours."
+        }
+
+    # Incorrect code entered
+    new_attempts = await increment_otp_attempts(active_otp["id"])
+    if new_attempts >= OTP_MAX_ATTEMPTS:
+        # Option 3: Lock out IP for 10 minutes and dispatch urgent Security Alert
+        await lockout_ip(ip, duration_seconds=OTP_LOCKOUT_SECONDS, reason="5_failed_otp_attempts")
+        await mark_otp_session_used(active_otp["id"])
+        if storage_client:
+            await storage_client.cancel_active_otp(ip)
+        asyncio.create_task(storage_client.send_security_alert(
+            ip=ip,
+            failed_count=new_attempts,
+            lockout_minutes=OTP_LOCKOUT_SECONDS // 60
+        ))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Security Lockout: 5 failed attempts reached! Your IP has been locked out for {OTP_LOCKOUT_SECONDS // 60} minutes. A security alert was dispatched to the Telegram owner."
+        )
+
+    remaining = OTP_MAX_ATTEMPTS - new_attempts
+    raise HTTPException(
+        status_code=400,
+        detail=f"Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} remaining before a 10-minute lockout."
+    )
+
+@app.post("/api/auth/cancel-otp")
+async def cancel_otp(request: Request, payload: Optional[OtpSendRequest] = None):
+    """Explicitly cancels the active OTP session and immediately purges the message from Telegram."""
+    ip = get_client_ip(request)
+    tab = payload.tab if payload and payload.tab else None
+    await cancel_otp_sessions(ip, tab=tab)
+    if storage_client:
+        await storage_client.cancel_active_otp(ip)
+    return {"success": True, "message": "Active OTP was cancelled and purged."}
+
 @app.post("/api/auth/verify")
 async def verify_password(payload: AuthRequest, response: Response):
-    """Verify password 'Allow' and issue session cookie."""
+    """Fallback password verification and 24-hour session cookie issuance."""
     if payload.password.strip().lower() == "allow":
         response.set_cookie(
             key="tg_auth",
             value="Allow",
-            max_age=60 * 60 * 24 * 365,
+            max_age=SESSION_COOKIE_AGE,
             httponly=False,
             samesite="lax"
         )
         return {"success": True, "message": "Authenticated"}
-    raise HTTPException(status_code=401, detail="Incorrect password. Please enter 'Allow'.")
+    raise HTTPException(status_code=401, detail="Incorrect password.")
 
 @app.get("/api/status")
 async def get_system_status():
-    """Retrieve system health and triple channel status."""
-    soft_resolved = bool(storage_client.software_channel_entity and storage_client.software_channel_entity != storage_client.channel_entity)
+    """Retrieve system health and connectivity status without exposing private channel details."""
     return {
         "status": "online",
         "mode": "demo" if storage_client.is_demo else "live",
         "is_demo": storage_client.is_demo,
         "credentials_configured": is_telegram_configured(),
-        "storage_channel_id": CHANNEL_ID if CHANNEL_ID != 0 else None,
-        "todo_channel_id": TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID,
-        "software_channel_id": SOFTWARE_CHANNEL_ID if SOFTWARE_CHANNEL_ID != 0 else CHANNEL_ID,
-        "software_channel_resolved": soft_resolved,
-        "bot_username": getattr(storage_client.bot_info, "username", None) if storage_client.bot_info else None,
+        "channels_connected": bool(storage_client.channel_entity is not None or storage_client.is_demo),
     }
 
 @app.get("/api/prefetch")

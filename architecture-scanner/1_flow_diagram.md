@@ -236,23 +236,34 @@ flowchart TD
 
 ---
 
-## 5. Authentication Flow
+## 5. Authentication Flow (Dynamic Telegram OTP with Option 3 Lockout)
 
 ```mermaid
 flowchart TD
-    A([User opens site]) --> B{Has tg_auth cookie?}
-    B -->|Yes, value=Allow| C([Access granted to all tabs])
-    B -->|No| D[Show password prompt]
-    D --> E[User types password]
-    E --> F[POST /api/auth/verify]
-    F --> G{Password == Allow?}
-    G -->|No| H([Show error — incorrect password])
-    G -->|Yes| I[Set tg_auth=Allow cookie\n365-day expiry]
-    I --> C
-
-    C --> J{Is path /api/files?category=software?}
-    J -->|Yes| K([Always public, no password required])
-    J -->|No| L([Requires Auth cookie])
+    A([User opens site]) --> B{Has 24h session cookie?}
+    B -->|Yes| C([Full Access Granted])
+    B -->|No| D[Display Telegram Security Access Modal]
+    D --> E{User clicks 'Send OTP'?}
+    E --> F[POST /api/auth/send-otp]
+    F --> G{IP locked out?}
+    G -->|Yes| H([429 Error — Locked for 10 min])
+    G -->|No| I{Rate limit > 4 req/min?}
+    I -->|Yes| J([429 Error — Rate limit wait])
+    I -->|No| K[Generate 6-digit cryptographic code]
+    K --> L[Dispatch code to Owner's Telegram private chat\nValid for 60 seconds]
+    L --> M[Start 60s countdown timer on UI]
+    M --> N[User enters 6-digit code in UI]
+    N --> O[POST /api/auth/verify-otp]
+    O --> P{Code expired > 60s?}
+    P -->|Yes| Q([400 Error — Expired, request new OTP])
+    P -->|No| R{Code hash matches SQLite?}
+    R -->|Yes| S[Set 24h session cookie\nInvalidate OTP session]
+    S --> C
+    R -->|No| T[Increment failed attempt counter]
+    T --> U{Attempts >= 5?}
+    U -->|No| V([Display remaining attempts\ne.g. 3 of 5 left])
+    U -->|Yes: Option 3 Triggered| W[Dispatch Security Alert to Telegram\nLockout IP for 10 minutes]
+    W --> X([Display 10-Minute Lockout Countdown])
 ```
 
 ---

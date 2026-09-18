@@ -17,12 +17,13 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 cd /d "%APP_DIR%"
 
 :: Wait 3 seconds for network interfaces to stabilize on login
-timeout /t 3 /nobreak >nul
+ping 127.0.0.1 -n 4 >nul
 
 :: ----------------------------------------------------------
 :: Launch Uvicorn backend (stdout + stderr sent to log file)
 :: ----------------------------------------------------------
 echo [%DATE% %TIME%] Starting SS Workspace backend... >> "%LOG_FILE%"
+set PYTHONUNBUFFERED=1
 "%PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 8000 >> "%LOG_FILE%" 2>&1
 
 

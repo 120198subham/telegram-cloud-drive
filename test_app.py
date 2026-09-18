@@ -258,3 +258,167 @@ async def test_fast_download_stream_parallel():
     assert total_received_bytes == total_size
 
 
+@pytest.mark.asyncio
+async def test_telegram_otp_full_lifecycle(monkeypatch):
+    """Verify OTP generation, 24-hour cookie verification, and protected resource access."""
+    await init_db()
+    from telegram_client import storage_client
+
+    captured_code = None
+    captured_context = None
+    original_send = storage_client.send_otp_to_owner
+
+    async def mock_send_otp(code, ip, expiry_seconds=60, context_info=None):
+        nonlocal captured_code, captured_context
+        captured_code = code
+        captured_context = context_info
+        return True, "Code delivered"
+
+    monkeypatch.setattr(storage_client, "send_otp_to_owner", mock_send_otp)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Telemetry check
+        status_resp = await client.get("/api/auth/status")
+        assert status_resp.status_code == 200
+        assert status_resp.json()["is_locked"] is False
+
+        # 2. Request OTP with tab & delete item context
+        send_resp = await client.post(
+            "/api/auth/send-otp",
+            json={"tab": "Softwares", "action": "delete_file", "target_name": "installer.exe"}
+        )
+        assert send_resp.status_code == 200
+        assert captured_code is not None
+        assert len(captured_code) == 6
+        assert captured_context == {"tab": "Softwares", "action": "delete_file", "target_name": "installer.exe"}
+
+        # 3. Verify OTP with captured code
+        verify_resp = await client.post("/api/auth/verify-otp", json={"code": captured_code})
+        assert verify_resp.status_code == 200
+        assert "tg_auth" in verify_resp.cookies
+
+        # 4. Access protected endpoint with issued cookie
+        client.cookies.set("tg_auth", "Allow")
+        files_resp = await client.get("/api/files")
+        assert files_resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_telegram_otp_rate_limit():
+    """Verify max 4 OTP requests per minute rate limit."""
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Forwarded-For": "10.0.0.42"}) as client:
+        # Send 4 requests (all should succeed)
+        for _ in range(4):
+            res = await client.post("/api/auth/send-otp")
+            assert res.status_code == 200
+
+        # 5th request should be blocked with 429
+        fifth_res = await client.post("/api/auth/send-otp")
+        assert fifth_res.status_code == 429
+        assert "Rate limit exceeded" in fifth_res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_otp_option3_lockout_after_5_failures():
+    """Verify Option 3: 5 failed attempts trigger 10-minute lockout and security alert."""
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Forwarded-For": "10.0.0.99"}) as client:
+        # Request OTP
+        send_res = await client.post("/api/auth/send-otp")
+        assert send_res.status_code == 200
+
+        # 4 incorrect attempts
+        for attempt in range(1, 5):
+            bad_res = await client.post("/api/auth/verify-otp", json={"code": f"99999{attempt}"})
+            assert bad_res.status_code == 400
+            assert f"{5 - attempt} attempt" in bad_res.json()["detail"]
+
+        # 5th incorrect attempt -> triggers Option 3 10-minute lockout
+        fifth_bad = await client.post("/api/auth/verify-otp", json={"code": "000000"})
+        assert fifth_bad.status_code == 429
+        assert "Security Lockout: 5 failed attempts reached!" in fifth_bad.json()["detail"]
+
+        # Subsequent OTP request is immediately rejected due to lockout
+        blocked_send = await client.post("/api/auth/send-otp")
+        assert blocked_send.status_code == 429
+        assert "Security Lockout" in blocked_send.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_otp_cross_tab_cancellation(monkeypatch):
+    """Verify that an OTP issued for one tab is strictly rejected & cancelled if used on another tab."""
+    await init_db()
+    from telegram_client import storage_client
+
+    captured_code = None
+
+    async def mock_send_otp(code, ip, expiry_seconds=60, context_info=None):
+        nonlocal captured_code
+        captured_code = code
+        return True, "Delivered"
+
+    monkeypatch.setattr(storage_client, "send_otp_to_owner", mock_send_otp)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Forwarded-For": "10.0.0.88"}) as client:
+        # 1. Request OTP specifically for "Documents / Files" tab
+        res1 = await client.post("/api/auth/send-otp", json={"tab": "Documents / Files", "action": "access"})
+        assert res1.status_code == 200
+        code_files = captured_code
+        assert code_files is not None
+
+        # 2. Attempt to verify this code for "Photos Gallery" tab (Cross-tab attempt)
+        cross_res = await client.post("/api/auth/verify-otp", json={"code": code_files, "tab": "Photos Gallery"})
+        assert cross_res.status_code == 400
+        assert "Cross-tab OTP rejected" in cross_res.json()["detail"]
+
+        # 3. Verify that the cross-tab attempt caused the OTP to be cancelled and invalidated
+        retry_res = await client.post("/api/auth/verify-otp", json={"code": code_files, "tab": "Documents / Files"})
+        assert retry_res.status_code == 400
+        assert "No active OTP found" in retry_res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_otp_explicit_cancel(monkeypatch):
+    """Verify that explicit cancellation via /api/auth/cancel-otp invalidates active OTP and allows fresh unique OTP."""
+    await init_db()
+    from telegram_client import storage_client
+
+    captured_code = None
+
+    async def mock_send_otp(code, ip, expiry_seconds=60, context_info=None):
+        nonlocal captured_code
+        captured_code = code
+        return True, "Delivered"
+
+    monkeypatch.setattr(storage_client, "send_otp_to_owner", mock_send_otp)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Forwarded-For": "10.0.0.77"}) as client:
+        # 1. Request OTP for "Videos Vault"
+        res1 = await client.post("/api/auth/send-otp", json={"tab": "Videos Vault"})
+        assert res1.status_code == 200
+        first_code = captured_code
+
+        # 2. User switches tab / closes modal -> triggers cancel-otp
+        cancel_res = await client.post("/api/auth/cancel-otp", json={"tab": "Videos Vault"})
+        assert cancel_res.status_code == 200
+
+        # 3. Old code cannot be verified anymore
+        verify_old = await client.post("/api/auth/verify-otp", json={"code": first_code, "tab": "Videos Vault"})
+        assert verify_old.status_code == 400
+
+        # 4. Request fresh OTP for "Videos Vault"
+        res2 = await client.post("/api/auth/send-otp", json={"tab": "Videos Vault"})
+        assert res2.status_code == 200
+        second_code = captured_code
+
+        # 5. Fresh OTP verifies successfully
+        verify_fresh = await client.post("/api/auth/verify-otp", json={"code": second_code, "tab": "Videos Vault"})
+        assert verify_fresh.status_code == 200
+        assert verify_fresh.json()["success"] is True
+

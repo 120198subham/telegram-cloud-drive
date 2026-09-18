@@ -1,7 +1,8 @@
 import aiosqlite
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+import hashlib
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any, Tuple
 from config import DB_PATH
 
 def format_size(size_bytes: int) -> str:
@@ -34,7 +35,7 @@ def detect_category(filename: str, mime_type: Optional[str] = None) -> str:
     return "file"
 
 async def init_db() -> None:
-    """Initialize the SQLite database schema with files, todos, and notes tables."""
+    """Initialize the SQLite database schema with files, todos, notes, otp_sessions, and ip_lockouts tables."""
     async with aiosqlite.connect(DB_PATH) as db:
         # Files table
         await db.execute("""
@@ -87,6 +88,43 @@ async def init_db() -> None:
             )
         """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_notes_created ON notes(created_at DESC)")
+
+        # OTP Sessions table (with unique tab binding & cancellation tracking)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS otp_sessions (
+                id TEXT PRIMARY KEY,
+                ip TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                used INTEGER DEFAULT 0,
+                tab TEXT,
+                action TEXT,
+                target_name TEXT,
+                cancelled INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_otp_ip ON otp_sessions(ip, created_at DESC)")
+
+        # Migration safe check for new columns in existing databases
+        for col_def in ["tab TEXT", "action TEXT", "target_name TEXT", "cancelled INTEGER DEFAULT 0"]:
+            col_name = col_def.split()[0]
+            try:
+                await db.execute(f"ALTER TABLE otp_sessions ADD COLUMN {col_def}")
+            except Exception:
+                pass
+
+        # IP Lockouts table (Option 3: 10 min lockout after 5 failed attempts)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ip_lockouts (
+                ip TEXT PRIMARY KEY,
+                locked_until TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_lockout_time ON ip_lockouts(locked_until)")
 
         await db.commit()
 
@@ -387,3 +425,161 @@ async def delete_note(note_id: str) -> Optional[Dict[str, Any]]:
         await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         await db.commit()
         return note
+
+# ==================== OTP & SECURITY LOCKOUT ====================
+
+def hash_otp_code(code: str) -> str:
+    """Hash OTP code with SHA-256."""
+    return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
+
+async def check_ip_lockout(ip: str) -> Tuple[bool, int]:
+    """
+    Check if an IP address is currently locked out.
+    Returns (is_locked, remaining_seconds).
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT locked_until FROM ip_lockouts WHERE ip = ?", (ip,))
+        row = await cursor.fetchone()
+        if not row:
+            return False, 0
+        
+        locked_until_dt = datetime.fromisoformat(row["locked_until"])
+        now_dt = datetime.now(timezone.utc)
+        diff = (locked_until_dt - now_dt).total_seconds()
+        if diff > 0:
+            return True, int(diff)
+        else:
+            # Lockout expired, clean up
+            await db.execute("DELETE FROM ip_lockouts WHERE ip = ?", (ip,))
+            await db.commit()
+            return False, 0
+
+async def lockout_ip(ip: str, duration_seconds: int = 600, reason: str = "failed_otp") -> str:
+    """Lock out an IP address for duration_seconds (default: 600s = 10 min)."""
+    now = datetime.now(timezone.utc)
+    locked_until = (now + timedelta(seconds=duration_seconds)).isoformat()
+    created_at = now.isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO ip_lockouts (ip, locked_until, reason, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET locked_until = excluded.locked_until, reason = excluded.reason
+        """, (ip, locked_until, reason, created_at))
+        await db.commit()
+    return locked_until
+
+async def check_rate_limit(ip: str, max_requests: int = 4, window_seconds: int = 60) -> Tuple[bool, int]:
+    """
+    Checks if the IP has exceeded max_requests within window_seconds.
+    Returns (allowed, retry_after_seconds).
+    """
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(seconds=window_seconds)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT created_at FROM otp_sessions
+            WHERE ip = ? AND created_at >= ?
+            ORDER BY created_at ASC
+        """, (ip, window_start))
+        rows = await cursor.fetchall()
+        if len(rows) >= max_requests:
+            oldest_dt = datetime.fromisoformat(rows[0][0])
+            elapsed = (now - oldest_dt).total_seconds()
+            retry_after = max(1, int(window_seconds - elapsed))
+            return False, retry_after
+        return True, 0
+
+async def create_otp_session(
+    ip: str,
+    code: str,
+    expiry_seconds: int = 60,
+    tab: Optional[str] = None,
+    action: Optional[str] = None,
+    target_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Invalidates any previous unverified OTP for this IP and creates a new one tied specifically to a tab and action.
+    """
+    session_id = str(uuid.uuid4())
+    code_hash = hash_otp_code(code)
+    now = datetime.now(timezone.utc)
+    created_at = now.isoformat()
+    expires_at = (now + timedelta(seconds=expiry_seconds)).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Invalidate previous unused OTP sessions for this IP as cancelled
+        await db.execute("UPDATE otp_sessions SET used = 1, cancelled = 1 WHERE ip = ? AND used = 0", (ip,))
+        await db.execute("""
+            INSERT INTO otp_sessions (id, ip, code_hash, attempts, expires_at, created_at, used, tab, action, target_name, cancelled)
+            VALUES (?, ?, ?, 0, ?, ?, 0, ?, ?, ?, 0)
+        """, (session_id, ip, code_hash, expires_at, created_at, tab, action, target_name))
+        await db.commit()
+
+    return {
+        "id": session_id,
+        "ip": ip,
+        "expires_at": expires_at,
+        "expires_in": expiry_seconds,
+        "created_at": created_at,
+        "tab": tab,
+        "action": action,
+        "target_name": target_name
+    }
+
+async def cancel_otp_sessions(ip: str, tab: Optional[str] = None) -> int:
+    """
+    Explicitly cancels/invalidates active unused OTP sessions for this IP.
+    Called when a user switches tabs, closes the lock modal, or an invalid cross-tab attempt is made.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        if tab:
+            cursor = await db.execute("""
+                UPDATE otp_sessions SET cancelled = 1, used = 1
+                WHERE ip = ? AND used = 0 AND LOWER(tab) = LOWER(?)
+            """, (ip, tab))
+        else:
+            cursor = await db.execute("""
+                UPDATE otp_sessions SET cancelled = 1, used = 1
+                WHERE ip = ? AND used = 0
+            """, (ip,))
+        await db.commit()
+        return cursor.rowcount
+
+async def get_active_otp_session(ip: str, tab: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve the latest active unused and non-cancelled OTP session for this IP."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if tab:
+            cursor = await db.execute("""
+                SELECT * FROM otp_sessions
+                WHERE ip = ? AND used = 0 AND (cancelled IS NULL OR cancelled = 0) AND expires_at > ? AND LOWER(tab) = LOWER(?)
+                ORDER BY created_at DESC LIMIT 1
+            """, (ip, now_iso, tab))
+        else:
+            cursor = await db.execute("""
+                SELECT * FROM otp_sessions
+                WHERE ip = ? AND used = 0 AND (cancelled IS NULL OR cancelled = 0) AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 1
+            """, (ip, now_iso))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+async def increment_otp_attempts(session_id: str) -> int:
+    """Increment the failed attempt count for an OTP session and return the new count."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE otp_sessions SET attempts = attempts + 1 WHERE id = ?", (session_id,))
+        await db.commit()
+        cursor = await db.execute("SELECT attempts FROM otp_sessions WHERE id = ?", (session_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else 1
+
+async def mark_otp_session_used(session_id: str) -> None:
+    """Mark an OTP session as used / completed."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE otp_sessions SET used = 1 WHERE id = ?", (session_id,))
+        await db.commit()

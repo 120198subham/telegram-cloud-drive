@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, Optional, Tuple, Any
+from typing import AsyncGenerator, Optional, Tuple, Any, Dict
 
 from config import (
     API_ID,
@@ -11,8 +11,11 @@ from config import (
     CHANNEL_ID,
     TODO_CHANNEL_ID,
     SOFTWARE_CHANNEL_ID,
+    OTP_CHANNEL_ID,
+    OTP_AUTO_DELETE_SECONDS,
     SESSION_NAME,
     DEMO_STORAGE_DIR,
+    OWNER_ID,
     is_telegram_configured,
 )
 
@@ -24,6 +27,7 @@ class TelegramStorageClient:
     Channel 1: Files, Photos, and Videos vault (up to 2 GB per file).
     Channel 2: To-Do tasks checklist and quick Text Notes.
     Channel 3: Softwares and Application installers.
+    Dedicated Channel: OTP codes and Security Alerts (auto-purged after 3 min).
     """
 
     def __init__(self):
@@ -34,7 +38,11 @@ class TelegramStorageClient:
         self.channel_entity = None
         self.todo_channel_entity = None
         self.software_channel_entity = None
+        self.otp_channel_entity = None
+        self.owner_entity = None
+        self.owner_id = OWNER_ID
         self._demo_counter = 1000
+        self.active_otp_messages: Dict[str, Tuple[Any, int]] = {}
 
     async def get_software_entity(self):
         """Dynamically resolve or return the software channel entity."""
@@ -103,6 +111,23 @@ class TelegramStorageClient:
                     logger.warning(f"Could not resolve separate SOFTWARE_CHANNEL_ID ({target_soft_id}) at startup: {e}. Bot needs to be added as admin to that channel.")
                     self.software_channel_entity = None
 
+            # Resolve dedicated OTP channel entity
+            if OTP_CHANNEL_ID != 0:
+                try:
+                    self.otp_channel_entity = await self.client.get_entity(OTP_CHANNEL_ID)
+                    logger.info(f"Dedicated OTP Channel resolved: {getattr(self.otp_channel_entity, 'title', OTP_CHANNEL_ID)}")
+                except Exception as e:
+                    logger.warning(f"Could not resolve dedicated OTP_CHANNEL_ID ({OTP_CHANNEL_ID}) at startup: {e}. Bot needs to be added as admin to that channel.")
+                    self.otp_channel_entity = None
+
+            # Resolve owner entity if configured
+            if self.owner_id != 0:
+                try:
+                    self.owner_entity = await self.client.get_entity(self.owner_id)
+                    logger.info(f"Owner Entity resolved: {getattr(self.owner_entity, 'first_name', self.owner_id)} (ID: {self.owner_id})")
+                except Exception as e:
+                    logger.warning(f"Could not resolve TELEGRAM_OWNER_ID ({self.owner_id}): {e}. Bot will auto-detect when you message it.")
+
             self.is_connected = True
             self.is_demo = False
 
@@ -117,6 +142,16 @@ class TelegramStorageClient:
                     if not msg:
                         return
                     chat_id = event.chat_id
+
+                    # If this is a private direct message to the bot, auto-detect Owner
+                    if event.is_private:
+                        sender = await event.get_sender()
+                        if sender and not getattr(sender, 'bot', False):
+                            self.owner_entity = sender
+                            self.owner_id = sender.id
+                            logger.info(f"Adopted private chat sender as Owner: {getattr(sender, 'first_name', '')} (ID: {sender.id})")
+                            if msg.raw_text and msg.raw_text.strip().startswith("/start"):
+                                await event.reply("👋 **Welcome to SS Workspace Vault Bot!**\n\nYour Telegram User ID is registered for one-time login codes (OTP) and real-time security alerts.")
 
                     is_software = (
                         SOFTWARE_CHANNEL_ID != 0 and (
@@ -647,6 +682,133 @@ class TelegramStorageClient:
             return True
         except Exception as e:
             logger.error(f"Failed to delete message {message_id} from channel {channel_id}: {e}")
+            return False
+
+    # ==================== OTP AUTH & SECURITY ALERTS ====================
+
+    async def send_otp_to_owner(self, code: str, ip: str, expiry_seconds: int = 60, context_info: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+        """Send a 6-digit login OTP directly to the dedicated security channel, specifying tab & action."""
+        tab_name = (context_info or {}).get("tab") or "Workspace Vault"
+        action = (context_info or {}).get("action") or "access"
+        target_name = (context_info or {}).get("target_name")
+
+        if self.is_demo or not self.client:
+            logger.info(f"[DEMO OTP] Verification code for {ip}: {code} (Tab: {tab_name}, Target: {target_name})")
+            return True, f"Demo Mode Active. Code: {code}"
+
+        # If there is already an active OTP message for this IP, purge it from Telegram immediately
+        await self.cancel_active_otp(ip)
+
+        # 1. Dedicated OTP Channel
+        target_entity = self.otp_channel_entity
+        if not target_entity and OTP_CHANNEL_ID != 0:
+            try:
+                self.otp_channel_entity = await self.client.get_entity(OTP_CHANNEL_ID)
+                target_entity = self.otp_channel_entity
+            except Exception as e:
+                logger.warning(f"Could not dynamically resolve OTP_CHANNEL_ID: {e}")
+
+        # Fallbacks if dedicated channel entity is unresolved
+        if not target_entity:
+            target_entity = self.owner_entity or self.todo_channel_entity or self.channel_entity
+
+        if not target_entity:
+            return False, "Could not reach Telegram destination for OTP."
+
+        # Build contextual details
+        details_lines = [
+            f"📂 **Target Tab:** `{tab_name}`"
+        ]
+        if action == "delete_file" or target_name:
+            details_lines.append("⚠️ **Action:** 🗑️ Removing Item")
+            if target_name:
+                details_lines.append(f"📄 **Item Being Removed:** `{target_name}`")
+        else:
+            details_lines.append("🔑 **Action:** Tab Security Access")
+
+        details_block = "\n".join(details_lines)
+
+        try:
+            msg = await self.client.send_message(
+                entity=target_entity,
+                message=(
+                    f"🔐 **[SS WORKSPACE LOGIN OTP]**\n\n"
+                    f"🔑 **Code:** `{code}`\n"
+                    f"⏳ **Valid for:** {expiry_seconds} seconds\n"
+                    f"🌐 **Client IP:** `{ip}`\n"
+                    f"{details_block}\n"
+                    f"🕒 **Auto-Deletes in:** 3 minutes\n\n"
+                    f"🛡️ _SS Workspace Security Shield_"
+                )
+            )
+
+            # Record active message so it can be purged immediately if cancelled or cross-tab switch occurs
+            self.active_otp_messages[ip] = (target_entity, msg.id)
+
+            # Auto-remove the OTP message from Telegram after 3 minutes (180 seconds)
+            async def _auto_delete_otp(entity, message_id, delay=OTP_AUTO_DELETE_SECONDS):
+                await asyncio.sleep(delay)
+                try:
+                    await self.client.delete_messages(entity, message_ids=[message_id])
+                    logger.info(f"Auto-deleted OTP message {message_id} from security channel after {delay}s")
+                except Exception as e:
+                    logger.debug(f"Could not auto-delete OTP message {message_id}: {e}")
+                finally:
+                    if ip in self.active_otp_messages and self.active_otp_messages[ip][1] == message_id:
+                        self.active_otp_messages.pop(ip, None)
+
+            asyncio.create_task(_auto_delete_otp(target_entity, msg.id, delay=OTP_AUTO_DELETE_SECONDS))
+
+            return True, "OTP dispatched to security channel (auto-deletes in 3 minutes)."
+        except Exception as e:
+            logger.error(f"Failed to send OTP to security channel: {e}")
+            return False, f"Failed to deliver OTP: {str(e)}"
+
+    async def cancel_active_otp(self, ip: str) -> bool:
+        """Immediately deletes the active OTP message from the Telegram channel upon cancellation or tab switch."""
+        if self.is_demo or not self.client:
+            return False
+        if ip in self.active_otp_messages:
+            target_entity, msg_id = self.active_otp_messages.pop(ip, (None, None))
+            if target_entity and msg_id:
+                try:
+                    await self.client.delete_messages(target_entity, message_ids=[msg_id])
+                    logger.info(f"Cancelled and purged active OTP message {msg_id} from Telegram channel for {ip}")
+                    return True
+                except Exception as e:
+                    logger.debug(f"Could not purge active OTP message {msg_id}: {e}")
+        return False
+
+    async def send_security_alert(self, ip: str, failed_count: int, lockout_minutes: int = 10) -> bool:
+        """Send an urgent security alert regarding failed OTP attempts and IP lockout (Option 3)."""
+        alert_msg = (
+            f"🚨 **[SECURITY ALERT — BRUTE FORCE DETECTED]**\n\n"
+            f"⚠️ **{failed_count} consecutive failed OTP attempts** detected!\n"
+            f"🌐 **Client IP:** `{ip}`\n"
+            f"⛔ **Protection Triggered:** IP has been **LOCKED OUT for {lockout_minutes} minutes**.\n\n"
+            f"🛡️ _SS Workspace Security Shield_"
+        )
+
+        if self.is_demo or not self.client:
+            logger.warning(f"[DEMO SECURITY ALERT] {alert_msg}")
+            return True
+
+        target_entity = self.otp_channel_entity or self.owner_entity or self.todo_channel_entity or self.channel_entity
+        if not target_entity and OTP_CHANNEL_ID != 0:
+            try:
+                target_entity = await self.client.get_entity(OTP_CHANNEL_ID)
+            except Exception:
+                pass
+
+        if not target_entity:
+            logger.warning("No target entity available for security alert.")
+            return False
+
+        try:
+            await self.client.send_message(entity=target_entity, message=alert_msg)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to dispatch security alert: {e}")
             return False
 
     async def close(self) -> None:

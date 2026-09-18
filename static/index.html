@@ -194,38 +194,93 @@
 </head>
 <body class="min-h-screen flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-24 sm:pb-8 w-full max-w-full overflow-x-hidden">
 
-    <!-- ==================== SECURITY ACCESS MODAL ==================== -->
+    <!-- ==================== SECURITY ACCESS MODAL (DYNAMIC TELEGRAM OTP) ==================== -->
     <div id="lockScreenOverlay" class="hidden fixed inset-0 z-50 backdrop-blur-xl flex items-center justify-center p-4 transition-colors" style="background-color: var(--modal-overlay);">
-        <div id="lockCard" class="glass relative max-w-sm w-full rounded-2xl p-6 sm:p-8 text-center space-y-5 shadow-2xl">
+        <div id="lockCard" class="glass relative max-w-sm w-full rounded-2xl p-6 sm:p-8 text-center space-y-4 shadow-2xl">
             <!-- Close Modal Button -->
             <button type="button" onclick="closeLockModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:opacity-80 transition" style="color: var(--text-secondary);" title="Close">
                 <i data-lucide="x" class="w-4 h-4"></i>
             </button>
 
-            <div class="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-500 flex items-center justify-center mx-auto shadow-inner">
-                <i data-lucide="lock" class="w-7 h-7"></i>
+            <!-- Header Icon -->
+            <div id="lockModalIcon" class="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-500 flex items-center justify-center mx-auto shadow-inner">
+                <i data-lucide="shield-check" class="w-7 h-7"></i>
             </div>
             <div>
-                <h2 class="text-lg sm:text-xl font-bold tracking-tight" style="color: var(--text-primary);">Security Access</h2>
-                <p class="text-xs mt-1" style="color: var(--text-secondary);">Enter password to unlock your private vault</p>
+                <h2 id="lockModalTitle" class="text-lg sm:text-xl font-bold tracking-tight" style="color: var(--text-primary);">Telegram Security OTP</h2>
+                <p id="lockSubtitle" class="text-xs mt-1" style="color: var(--text-secondary);">One-time verification code sent directly to Telegram</p>
             </div>
-            
-            <form onsubmit="handleUnlock(event); return false;" class="space-y-3">
+
+            <!-- Lockout Alert Banner (Option 3: 5 failed attempts) -->
+            <div id="lockoutBanner" class="hidden p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs text-left space-y-1">
+                <div class="flex items-center space-x-1.5 font-bold">
+                    <i data-lucide="alert-octagon" class="w-4 h-4 text-red-500 shrink-0"></i>
+                    <span>IP Temporarily Locked Out</span>
+                </div>
+                <p class="text-[11px] leading-relaxed">5 failed attempts detected. A security alert was dispatched to the Telegram owner.</p>
+                <div class="pt-1 font-mono font-semibold text-center text-red-400" id="lockoutCountdown">
+                    Locked for: 10:00
+                </div>
+            </div>
+
+            <!-- Error / Info Status Message -->
+            <div id="lockErrorMsg" class="hidden p-2.5 rounded-xl text-xs font-medium border"></div>
+
+            <!-- STEP 1: Request OTP State -->
+            <div id="otpRequestState" class="space-y-3">
+                <button type="button" id="sendOtpBtn" onclick="requestTelegramOtp()" class="w-full py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 active:scale-95 text-white font-semibold text-sm rounded-xl transition shadow-lg shadow-sky-500/20 flex items-center justify-center space-x-2 cursor-pointer">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    <span id="sendOtpBtnText">Send OTP to My Telegram</span>
+                </button>
+                <p class="text-[11px]" style="color: var(--text-secondary);">
+                    Limit: 4 requests / min • Valid for 60 seconds
+                </p>
+            </div>
+
+            <!-- STEP 2: Enter OTP State -->
+            <form id="otpInputState" onsubmit="handleVerifyOtp(event); return false;" class="hidden space-y-3">
+                <div class="relative">
+                    <input type="text" id="otpInput" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="------" class="w-full text-center text-2xl font-mono font-bold tracking-[0.4em] py-2.5 border rounded-xl focus:outline-none focus:border-sky-500 transition" style="background-color: var(--input-bg); border-color: var(--input-border); color: var(--text-primary);">
+                </div>
+
+                <!-- 60s Expiry Countdown Progress -->
+                <div class="space-y-1">
+                    <div class="flex items-center justify-between text-[11px] font-mono" style="color: var(--text-secondary);">
+                        <span id="otpCountdownText">⏳ Expires in: 60s</span>
+                        <span id="otpAttemptsBadge" class="text-amber-500 font-medium">5 attempts left</span>
+                    </div>
+                    <div class="w-full rounded-full h-1 overflow-hidden" style="background-color: var(--subtle-bg);">
+                        <div id="otpCountdownBar" class="bg-gradient-to-r from-sky-500 to-emerald-500 h-1 rounded-full transition-all duration-1000" style="width: 100%"></div>
+                    </div>
+                </div>
+
+                <button type="submit" id="verifyOtpBtn" class="w-full py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-semibold text-sm rounded-xl transition shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-1.5 cursor-pointer">
+                    <span>Verify & Unlock</span>
+                    <i data-lucide="check-circle" class="w-4 h-4"></i>
+                </button>
+
+                <div class="flex items-center justify-between text-[11px] pt-1" style="color: var(--text-secondary);">
+                    <button type="button" onclick="requestTelegramOtp()" id="resendOtpLink" class="hover:underline text-sky-500 font-medium">Resend Code</button>
+                    <button type="button" onclick="showFallbackPasswordPrompt()" class="hover:underline opacity-70">Use Password</button>
+                </div>
+            </form>
+
+            <!-- Fallback Password Form (Optional fallback) -->
+            <form id="fallbackPasswordState" onsubmit="handleFallbackPassword(event); return false;" class="hidden space-y-3">
                 <div class="relative">
                     <i data-lucide="key-round" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2" style="color: var(--text-secondary);"></i>
-                    <input type="password" id="passwordInput" placeholder="Enter password..." class="w-full pl-10 pr-4 py-3 border rounded-xl text-base sm:text-sm focus:outline-none focus:border-sky-500 transition">
+                    <input type="password" id="fallbackPasswordInput" placeholder="Enter fallback password..." class="w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-sky-500 transition" style="background-color: var(--input-bg); border-color: var(--input-border); color: var(--text-primary);">
                 </div>
-                <p id="lockErrorMsg" class="hidden text-xs text-red-500 font-medium"></p>
-                <button type="submit" class="w-full py-3 bg-sky-500 hover:bg-sky-600 active:scale-95 text-white font-semibold text-sm rounded-xl transition shadow-lg shadow-sky-500/20 flex items-center justify-center space-x-1.5 cursor-pointer">
-                    <span>Unlock Workspace</span>
-                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                <button type="submit" class="w-full py-2.5 bg-sky-500 hover:bg-sky-600 active:scale-95 text-white font-semibold text-sm rounded-xl transition">
+                    <span>Unlock via Password</span>
                 </button>
+                <button type="button" onclick="showOtpPrompt()" class="text-[11px] text-sky-500 hover:underline">Back to Telegram OTP</button>
             </form>
 
             <div class="pt-2 border-t" style="border-color: var(--border-divider);">
                 <button type="button" onclick="goToPublicSoftwares()" class="w-full py-2.5 rounded-xl border text-xs font-medium transition flex items-center justify-center space-x-1.5 hover:opacity-80" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
                     <i data-lucide="box" class="w-4 h-4 text-purple-500"></i>
-                    <span>Browse Softwares (No Password Required)</span>
+                    <span>Browse Softwares (No OTP Required)</span>
                 </button>
             </div>
         </div>
@@ -642,16 +697,20 @@
             </div>
             <div class="space-y-2 text-xs">
                 <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
-                    <strong class="block" style="color: var(--text-primary);">Channel 1: Files, Photos & Videos</strong>
-                    <span class="font-mono text-[11px]" style="color: var(--text-secondary);">ID: -1003983927893 (Storage Vault)</span>
+                    <strong class="block" style="color: var(--text-primary);">Vault Storage</strong>
+                    <span class="text-[11px]" style="color: var(--text-secondary);">Files, Photos & Videos Cloud Vault Connected</span>
                 </div>
                 <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
-                    <strong class="block" style="color: var(--text-primary);">Channel 2: Tasks & Quick Notes</strong>
-                    <span class="font-mono text-[11px]" style="color: var(--text-secondary);">ID: -1004382319669 (Todo & Notes Vault)</span>
+                    <strong class="block" style="color: var(--text-primary);">Software Vault</strong>
+                    <span class="text-[11px]" style="color: var(--text-secondary);">Dedicated Public Software Repository & Installers</span>
                 </div>
                 <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
-                    <strong class="block" style="color: var(--text-primary);">Channel 3: Softwares & Applications</strong>
-                    <span class="font-mono text-[11px]" style="color: var(--text-secondary);">ID: -1004334670893 (Software Vault)</span>
+                    <strong class="block" style="color: var(--text-primary);">Tasks & Quick Notes</strong>
+                    <span class="text-[11px]" style="color: var(--text-secondary);">Dedicated Workspace Database Synchronized</span>
+                </div>
+                <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                    <strong class="block" style="color: var(--text-primary);">Security OTP Channel</strong>
+                    <span class="text-[11px]" style="color: var(--text-secondary);">Dedicated OTP Channel Configured (Auto-Purged in 3 min)</span>
                 </div>
             </div>
             <div class="pt-2 flex justify-end">
@@ -697,6 +756,20 @@
         let currentXHR = null;
         let isUnlocked = false;
         let pendingTab = null;
+        let pendingContext = null;
+        let pendingAction = null;
+
+        function getTabFriendlyName(tab) {
+            const map = {
+                'softwares': 'Softwares',
+                'files': 'Documents / Files',
+                'photos': 'Photos Gallery',
+                'videos': 'Videos Vault',
+                'notes': 'Notes & Messages',
+                'todos': 'To-Do Tasks'
+            };
+            return map[tab] || (tab ? tab.charAt(0).toUpperCase() + tab.slice(1) : 'Workspace Vault');
+        }
 
         function refreshIcons() {
             try {
@@ -733,34 +806,359 @@
             refreshIcons();
         }
 
+        let otpCountdownInterval = null;
+        let lockoutCountdownInterval = null;
+
         function showLockModal(show) {
             const overlay = document.getElementById('lockScreenOverlay');
             if (!overlay) return;
             if (show) {
                 overlay.classList.remove('hidden');
-                const input = document.getElementById('passwordInput');
+
+                const titleEl = document.getElementById('lockModalTitle');
+                const subEl = document.getElementById('lockSubtitle');
+                const iconBox = document.getElementById('lockModalIcon');
+
+                if (pendingContext && pendingContext.action === 'delete_file') {
+                    if (titleEl) titleEl.textContent = 'Authorize Item Removal';
+                    if (subEl) subEl.textContent = `OTP code required to delete "${pendingContext.target_name || 'item'}" from ${pendingContext.tab || 'Storage'}`;
+                    if (iconBox) iconBox.innerHTML = `<i data-lucide="trash-2" class="w-7 h-7 text-red-500"></i>`;
+                } else {
+                    const tabName = (pendingContext && pendingContext.tab) ? pendingContext.tab : getTabFriendlyName(pendingTab || currentTab);
+                    if (titleEl) titleEl.textContent = 'Telegram Security OTP';
+                    if (subEl) subEl.textContent = `One-time verification code sent to Telegram to access ${tabName}`;
+                    if (iconBox) iconBox.innerHTML = `<i data-lucide="shield-check" class="w-7 h-7 text-sky-500"></i>`;
+                }
+
+                refreshIcons();
+                // Check IP lockout and active OTP telemetry
+                fetchAuthTelemetry();
+            } else {
+                overlay.classList.add('hidden');
+                clearInterval(otpCountdownInterval);
+                clearInterval(lockoutCountdownInterval);
+            }
+        }
+
+        async function cancelActiveOtp() {
+            try {
+                clearInterval(otpCountdownInterval);
+                const targetTab = (pendingContext && pendingContext.tab) ? pendingContext.tab : getTabFriendlyName(pendingTab || currentTab);
+                await fetch('/api/auth/cancel-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab: targetTab })
+                });
+            } catch (e) {
+                console.debug("Cancel OTP error:", e);
+            }
+        }
+
+        async function fetchAuthTelemetry() {
+            try {
+                const targetTab = (pendingContext && pendingContext.tab) ? pendingContext.tab : getTabFriendlyName(pendingTab || currentTab);
+                const res = await fetch(`/api/auth/status?tab=${encodeURIComponent(targetTab)}`);
+                const data = await res.json();
+                handleAuthStatusData(data);
+            } catch (err) {
+                console.warn('Auth status check error:', err);
+            }
+        }
+
+        function handleAuthStatusData(data) {
+            const lockoutBanner = document.getElementById('lockoutBanner');
+            const otpRequestState = document.getElementById('otpRequestState');
+            const otpInputState = document.getElementById('otpInputState');
+            const fallbackState = document.getElementById('fallbackPasswordState');
+            const errorMsg = document.getElementById('lockErrorMsg');
+
+            if (fallbackState) fallbackState.classList.add('hidden');
+            if (errorMsg) errorMsg.classList.add('hidden');
+
+            // 1. If currently locked out (Option 3: 5 failed attempts)
+            if (data.is_locked && data.lockout_remaining_seconds > 0) {
+                if (lockoutBanner) lockoutBanner.classList.remove('hidden');
+                if (otpRequestState) otpRequestState.classList.add('hidden');
+                if (otpInputState) otpInputState.classList.add('hidden');
+                startLockoutCountdown(data.lockout_remaining_seconds);
+                return;
+            } else {
+                if (lockoutBanner) lockoutBanner.classList.add('hidden');
+                clearInterval(lockoutCountdownInterval);
+            }
+
+            // 2. If active OTP with time remaining
+            if (data.has_active_otp && data.otp_remaining_seconds > 0) {
+                if (otpRequestState) otpRequestState.classList.add('hidden');
+                if (otpInputState) otpInputState.classList.remove('hidden');
+                startOtpCountdown(data.otp_remaining_seconds);
+                const remainingAttempts = Math.max(1, (data.max_attempts || 5) - (data.attempts_used || 0));
+                const badge = document.getElementById('otpAttemptsBadge');
+                if (badge) badge.textContent = `${remainingAttempts} attempt${remainingAttempts !== 1 ? 's' : ''} left`;
+                const input = document.getElementById('otpInput');
+                if (input) setTimeout(() => input.focus(), 150);
+            } else {
+                // Initial state
+                if (otpRequestState) otpRequestState.classList.remove('hidden');
+                if (otpInputState) otpInputState.classList.add('hidden');
+            }
+            refreshIcons();
+        }
+
+        function startLockoutCountdown(seconds) {
+            clearInterval(lockoutCountdownInterval);
+            let remaining = seconds;
+            const el = document.getElementById('lockoutCountdown');
+            const updateUI = () => {
+                const mins = Math.floor(remaining / 60);
+                const secs = remaining % 60;
+                if (el) el.textContent = `Locked for: ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                if (remaining <= 0) {
+                    clearInterval(lockoutCountdownInterval);
+                    fetchAuthTelemetry();
+                }
+                remaining--;
+            };
+            updateUI();
+            lockoutCountdownInterval = setInterval(updateUI, 1000);
+        }
+
+        function startOtpCountdown(totalSeconds) {
+            clearInterval(otpCountdownInterval);
+            let remaining = totalSeconds;
+            const textEl = document.getElementById('otpCountdownText');
+            const barEl = document.getElementById('otpCountdownBar');
+            const initialMax = 60;
+
+            const updateUI = () => {
+                if (textEl) textEl.textContent = `⏳ Expires in: ${remaining}s`;
+                if (barEl) {
+                    const percent = Math.max(0, Math.min(100, (remaining / initialMax) * 100));
+                    barEl.style.width = `${percent}%`;
+                }
+                if (remaining <= 0) {
+                    clearInterval(otpCountdownInterval);
+                    if (textEl) textEl.textContent = '❌ Code Expired';
+                    showLockError('Verification code expired. Please request a new OTP.', false);
+                }
+                remaining--;
+            };
+            updateUI();
+            otpCountdownInterval = setInterval(updateUI, 1000);
+        }
+
+        async function requestTelegramOtp() {
+            const btn = document.getElementById('sendOtpBtn');
+            const btnText = document.getElementById('sendOtpBtnText');
+            const originalText = btnText ? btnText.textContent : 'Send OTP to My Telegram';
+            const errorMsg = document.getElementById('lockErrorMsg');
+            if (errorMsg) errorMsg.classList.add('hidden');
+
+            try {
+                if (btn) btn.disabled = true;
+                if (btnText) btnText.textContent = 'Sending to Telegram...';
+
+                const payload = pendingContext || {
+                    tab: getTabFriendlyName(pendingTab || currentTab),
+                    action: 'access',
+                    target_name: null
+                };
+
+                const res = await fetch('/api/auth/send-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Failed to request OTP.');
+                }
+
+                // Show step 2
+                document.getElementById('otpRequestState').classList.add('hidden');
+                document.getElementById('otpInputState').classList.remove('hidden');
+                startOtpCountdown(data.expires_in || 60);
+
+                const badge = document.getElementById('otpAttemptsBadge');
+                if (badge) badge.textContent = '5 attempts left';
+
+                const input = document.getElementById('otpInput');
                 if (input) {
                     input.value = '';
                     setTimeout(() => input.focus(), 150);
                 }
-                const errorMsg = document.getElementById('lockErrorMsg');
-                if (errorMsg) errorMsg.classList.add('hidden');
-            } else {
-                overlay.classList.add('hidden');
+
+                if (data.demo_code) {
+                    showLockError(`Demo Code: ${data.demo_code}`, false, true);
+                }
+                refreshIcons();
+            } catch (err) {
+                showLockError(err.message || 'Error requesting OTP code.', true);
+                fetchAuthTelemetry();
+            } finally {
+                if (btn) btn.disabled = false;
+                if (btnText) btnText.textContent = originalText;
             }
         }
 
+        async function handleVerifyOtp(e) {
+            if (e) {
+                try { e.preventDefault(); } catch (_) {}
+                try { e.stopPropagation(); } catch (_) {}
+            }
+            const input = document.getElementById('otpInput');
+            const code = (input && input.value ? input.value : '').trim();
+            const btn = document.getElementById('verifyOtpBtn');
+            const lockCard = document.getElementById('lockCard');
+
+            if (!code || code.length < 4) {
+                showLockError('Please enter the 6-digit OTP code.', true);
+                if (input) input.focus();
+                return false;
+            }
+
+            try {
+                if (btn) btn.disabled = true;
+                const currentTargetTab = (pendingContext && pendingContext.tab) ? pendingContext.tab : getTabFriendlyName(pendingTab || currentTab);
+                const currentAction = (pendingContext && pendingContext.action) ? pendingContext.action : 'access';
+                const currentTargetName = (pendingContext && pendingContext.target_name) ? pendingContext.target_name : null;
+
+                const res = await fetch('/api/auth/verify-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        code: code,
+                        tab: currentTargetTab,
+                        action: currentAction,
+                        target_name: currentTargetName
+                    })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    if (data.detail && data.detail.includes("Cross-tab")) {
+                        // Switch back to Step 1 so user can request a fresh OTP for this specific tab
+                        document.getElementById('otpInputState').classList.add('hidden');
+                        document.getElementById('otpRequestState').classList.remove('hidden');
+                        clearInterval(otpCountdownInterval);
+                    }
+                    throw new Error(data.detail || 'Verification failed.');
+                }
+
+                // Authentication Success!
+                document.cookie = "tg_auth=Allow; path=/; max-age=86400; SameSite=Lax";
+                clearInterval(otpCountdownInterval);
+                showLockModal(false);
+                isUnlocked = true;
+                updateLockStateUI(true);
+
+                if (pendingAction && pendingAction.type === 'delete') {
+                    const act = pendingAction;
+                    pendingAction = null;
+                    pendingContext = null;
+                    await executeDeleteFile(act.id, act.filename, act.category);
+                    return false;
+                }
+
+                const targetTab = pendingTab || 'files';
+                pendingTab = null;
+                pendingContext = null;
+                activateTab(targetTab);
+                return false;
+            } catch (err) {
+                // Shake lock card
+                if (lockCard) {
+                    lockCard.classList.remove('animate-shake');
+                    void lockCard.offsetWidth;
+                    lockCard.classList.add('animate-shake');
+                    setTimeout(() => lockCard.classList.remove('animate-shake'), 500);
+                }
+                showLockError(err.message || 'Invalid OTP code.', true);
+                if (input) {
+                    input.select();
+                    input.focus();
+                }
+                fetchAuthTelemetry();
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+            return false;
+        }
+
+        function showFallbackPasswordPrompt() {
+            document.getElementById('otpRequestState').classList.add('hidden');
+            document.getElementById('otpInputState').classList.add('hidden');
+            document.getElementById('fallbackPasswordState').classList.remove('hidden');
+            const input = document.getElementById('fallbackPasswordInput');
+            if (input) setTimeout(() => input.focus(), 150);
+            refreshIcons();
+        }
+
+        function showOtpPrompt() {
+            document.getElementById('fallbackPasswordState').classList.add('hidden');
+            fetchAuthTelemetry();
+        }
+
+        async function handleFallbackPassword(e) {
+            if (e) {
+                try { e.preventDefault(); } catch (_) {}
+                try { e.stopPropagation(); } catch (_) {}
+            }
+            const input = document.getElementById('fallbackPasswordInput');
+            const password = (input && input.value ? input.value : '').trim();
+
+            if (password.toLowerCase() === 'allow') {
+                document.cookie = "tg_auth=Allow; path=/; max-age=86400; SameSite=Lax";
+                showLockModal(false);
+                isUnlocked = true;
+                updateLockStateUI(true);
+
+                if (pendingAction && pendingAction.type === 'delete') {
+                    const act = pendingAction;
+                    pendingAction = null;
+                    pendingContext = null;
+                    await executeDeleteFile(act.id, act.filename, act.category);
+                    return false;
+                }
+
+                const targetTab = pendingTab || 'files';
+                pendingTab = null;
+                pendingContext = null;
+                activateTab(targetTab);
+                return false;
+            }
+            showLockError('Incorrect password.', true);
+        }
+
+        function showLockError(msg, isError = true, isNotice = false) {
+            const errorMsg = document.getElementById('lockErrorMsg');
+            if (!errorMsg) return;
+            errorMsg.textContent = msg;
+            errorMsg.className = 'p-2.5 rounded-xl text-xs font-medium border ' + (
+                isNotice ? 'bg-sky-500/10 border-sky-500/30 text-sky-500' :
+                (isError ? 'bg-red-500/10 border-red-500/30 text-red-500' : 'bg-amber-500/10 border-amber-500/30 text-amber-500')
+            );
+            errorMsg.classList.remove('hidden');
+        }
+
         function closeLockModal() {
+            cancelActiveOtp();
             showLockModal(false);
             pendingTab = null;
+            pendingAction = null;
+            pendingContext = null;
             if (currentTab !== 'softwares' && !isUnlocked) {
                 activateTab('softwares');
             }
         }
 
         function goToPublicSoftwares() {
+            cancelActiveOtp();
             closeLockModal();
             pendingTab = null;
+            pendingAction = null;
+            pendingContext = null;
             activateTab('softwares');
         }
 
@@ -768,7 +1166,14 @@
             if (isUnlocked) {
                 lockApp();
             } else {
-                pendingTab = 'files';
+                cancelActiveOtp();
+                pendingTab = (currentTab !== 'softwares') ? currentTab : 'files';
+                pendingAction = null;
+                pendingContext = {
+                    tab: getTabFriendlyName(pendingTab),
+                    action: 'access',
+                    target_name: null
+                };
                 showLockModal(true);
             }
         }
@@ -777,6 +1182,8 @@
             // Page reload: MANDATORY lock on all private tabs & default to Softwares tab!
             isUnlocked = false;
             pendingTab = null;
+            pendingAction = null;
+            pendingContext = null;
             localStorage.removeItem('tg_auth');
             updateLockStateUI(false);
             initApp('softwares');
@@ -794,58 +1201,12 @@
             }).catch(() => {});
         }
 
-        async function handleUnlock(e) {
-            if (e) {
-                try { e.preventDefault(); } catch (_) {}
-                try { e.stopPropagation(); } catch (_) {}
-            }
-            const input = document.getElementById('passwordInput');
-            const errorMsg = document.getElementById('lockErrorMsg');
-            const lockCard = document.getElementById('lockCard');
-            const password = (input && input.value ? input.value : '').trim();
-
-            if (password.toLowerCase() === 'allow') {
-                document.cookie = "tg_auth=Allow; path=/; max-age=3600; SameSite=Lax";
-                showLockModal(false);
-                isUnlocked = true;
-                updateLockStateUI(true);
-
-                // Inform backend asynchronously
-                try {
-                    fetch('/api/auth/verify', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ password: 'Allow' })
-                    });
-                } catch (ignore) {}
-
-                const targetTab = pendingTab || 'files';
-                pendingTab = null;
-                activateTab(targetTab);
-                return false;
-            }
-
-            // If incorrect password
-            if (errorMsg) {
-                errorMsg.textContent = "Incorrect password.";
-                errorMsg.classList.remove('hidden');
-            }
-            if (lockCard) {
-                lockCard.classList.remove('animate-shake');
-                void lockCard.offsetWidth; // Trigger reflow
-                lockCard.classList.add('animate-shake');
-                setTimeout(() => lockCard.classList.remove('animate-shake'), 500);
-            }
-            if (input) {
-                input.focus();
-                input.select();
-            }
-            return false;
-        }
-
         function lockApp() {
+            cancelActiveOtp();
             isUnlocked = false;
             pendingTab = null;
+            pendingAction = null;
+            pendingContext = null;
             localStorage.removeItem('tg_auth');
             document.cookie = "tg_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
             updateLockStateUI(false);
@@ -859,9 +1220,14 @@
                 return;
             }
 
+            // Cross-tab switch: explicitly cancel previous tab's active OTP immediately!
+            cancelActiveOtp();
+
             // Software tab is completely public, no lock required
             if (tab === 'softwares') {
                 isUnlocked = false;
+                pendingAction = null;
+                pendingContext = null;
                 updateLockStateUI(false);
                 activateTab('softwares');
                 return;
@@ -870,6 +1236,12 @@
             // Mandatory lock on all other tabs for every tab switch!
             isUnlocked = false;
             pendingTab = tab;
+            pendingAction = null;
+            pendingContext = {
+                tab: getTabFriendlyName(tab),
+                action: 'access',
+                target_name: null
+            };
             showLockModal(true);
         }
 
@@ -1230,15 +1602,15 @@
                         <div class="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20 max-w-md mx-auto text-left text-xs space-y-1.5 shadow-sm">
                             <div class="flex items-center space-x-1.5 font-semibold text-purple-600 dark:text-purple-400">
                                 <i data-lucide="info" class="w-4 h-4 shrink-0"></i>
-                                <span>Telegram Software Channel (-1004334670893):</span>
+                                <span>Software Vault:</span>
                             </div>
                             <p class="text-[11px] leading-relaxed" style="color: var(--text-secondary);">
-                                If you posted files in Telegram and don't see them yet, ensure <strong>@my_cloud_vault_drive_bot</strong> is added as an <strong>Administrator</strong> in that channel with "Post Messages" permission.
+                                Upload software installers above or sync directly with the cloud vault. Public visitors can download software without needing an OTP.
                             </p>
                         </div>
                         <button onclick="fetchCategoryFiles('software', true)" class="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-purple-500 text-white text-xs font-medium hover:bg-purple-600 active:scale-95 transition shadow-md shadow-purple-500/20">
                             <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
-                            <span>Check Telegram Now</span>
+                            <span>Check Vault Now</span>
                         </button>
                     </div>
                 `;
@@ -1256,27 +1628,38 @@
                             <div class="flex items-center space-x-2 text-[10px] sm:text-[11px] mt-0.5 min-w-0 truncate" style="color: var(--text-secondary);">
                                 <span class="font-mono font-medium shrink-0">${f.size_formatted}</span>
                                 <span>•</span>
-                                <span class="truncate">Public • Msg #${f.telegram_message_id}</span>
+                                <span class="truncate">Public Software</span>
                             </div>
                         </div>
                     </div>
                     <div class="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
-                        <button id="downloadBtn-${f.id}" data-id="${f.id}" data-name="${escapeHtml(f.filename)}" data-size="${f.size || 0}" onclick="handleDownloadClick(this, true)" class="p-1.5 sm:p-2 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition flex items-center justify-center" title="Direct Download (Free)"><i data-lucide="download" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
-                        <button onclick="deleteSoftwareFile('${f.id}')" class="p-1.5 sm:p-2 rounded-xl bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete"><i data-lucide="trash-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                        <button id="downloadBtn-${f.id}" data-id="${f.id}" data-name="${escapeHtml(f.filename)}" data-size="${f.size || 0}" onclick="handleDownloadClick(this, true)" class="p-1.5 sm:p-2 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition flex items-center justify-center" title="Direct Download (No OTP Needed)"><i data-lucide="download" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                        <button data-id="${f.id}" data-name="${escapeHtml(f.filename)}" onclick="handleDeleteSoftwareClick(this)" class="p-1.5 sm:p-2 rounded-xl bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete (Requires OTP)"><i data-lucide="trash-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
                     </div>
                 </div>
             `).join('');
             refreshIcons();
         }
 
-        async function deleteSoftwareFile(id) {
-            if (!isUnlocked) {
-                alert("Security password required to delete items from storage.");
-                pendingTab = 'softwares';
-                showLockModal(true);
-                return;
-            }
-            deleteFile(id);
+        function handleDeleteSoftwareClick(btn) {
+            if (!btn) return;
+            const fileId = btn.getAttribute('data-id');
+            const filename = btn.getAttribute('data-name') || 'Software File';
+            deleteSoftwareFile(fileId, filename);
+        }
+
+        async function deleteSoftwareFile(id, filename = 'Software File') {
+            // Removing anything from the software tab ALWAYS requires OTP confirmation
+            pendingAction = { type: 'delete', id: id, filename: filename, category: 'software' };
+            pendingContext = { tab: 'Softwares', action: 'delete_file', target_name: filename };
+            showLockModal(true);
+        }
+
+        function handleDeleteFileClick(btn, category) {
+            if (!btn) return;
+            const fileId = btn.getAttribute('data-id');
+            const filename = btn.getAttribute('data-name') || 'File';
+            deleteFile(fileId, filename, category);
         }
 
         function renderFilesList(files) {
@@ -1302,7 +1685,7 @@
                     </div>
                     <div class="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
                         <button id="downloadBtn-${f.id}" data-id="${f.id}" data-name="${escapeHtml(f.filename)}" data-size="${f.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1.5 sm:p-2 rounded-xl bg-sky-500/15 text-sky-500 hover:bg-sky-500/25 transition flex items-center justify-center" title="Download Document"><i data-lucide="download" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
-                        <button onclick="deleteFile('${f.id}')" class="p-1.5 sm:p-2 rounded-xl bg-red-500/15 text-red-500 hover:bg-red-500/25 transition"><i data-lucide="trash-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                        <button data-id="${f.id}" data-name="${escapeHtml(f.filename)}" onclick="handleDeleteFileClick(this, 'file')" class="p-1.5 sm:p-2 rounded-xl bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete Document"><i data-lucide="trash-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
                     </div>
                 </div>
             `).join('');
@@ -1322,7 +1705,7 @@
                         <span class="text-[10px] text-white font-medium truncate max-w-[65px] sm:max-w-[90px]">${escapeHtml(p.filename)}</span>
                         <div class="flex space-x-1 shrink-0">
                             <button id="downloadBtn-${p.id}" data-id="${p.id}" data-name="${escapeHtml(p.filename)}" data-size="${p.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1 rounded-md bg-white/20 hover:bg-white/40 text-white flex items-center justify-center transition" title="Download Photo"><i data-lucide="download" class="w-3 h-3"></i></button>
-                            <button onclick="deleteFile('${p.id}')" class="p-1 rounded-md bg-red-500/60 hover:bg-red-500/80 text-white transition" title="Delete Photo"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                            <button data-id="${p.id}" data-name="${escapeHtml(p.filename)}" onclick="handleDeleteFileClick(this, 'photo')" class="p-1 rounded-md bg-red-500/60 hover:bg-red-500/80 text-white transition" title="Delete Photo"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
                         </div>
                     </div>
                 </div>
@@ -1350,7 +1733,7 @@
                         </div>
                         <div class="flex items-center space-x-1.5 shrink-0">
                             <button id="downloadBtn-${v.id}" data-id="${v.id}" data-name="${escapeHtml(v.filename)}" data-size="${v.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1.5 rounded-lg bg-sky-500/15 text-sky-500 hover:bg-sky-500/25 transition flex items-center justify-center" title="Download Video"><i data-lucide="download" class="w-3.5 h-3.5"></i></button>
-                            <button onclick="deleteFile('${v.id}')" class="p-1.5 rounded-lg bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete Video"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                            <button data-id="${v.id}" data-name="${escapeHtml(v.filename)}" onclick="handleDeleteFileClick(this, 'video')" class="p-1.5 rounded-lg bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete Video"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                         </div>
                     </div>
                 </div>
@@ -1607,18 +1990,33 @@
             });
         }
 
-        async function deleteFile(id) {
+        async function deleteFile(id, filename = 'File', category = null) {
+            const cat = category || (currentTab === 'softwares' ? 'software' : (currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file')));
             if (!isUnlocked) {
-                pendingTab = currentTab;
+                pendingAction = { type: 'delete', id: id, filename: filename, category: cat };
+                pendingContext = { tab: getTabFriendlyName(currentTab), action: 'delete_file', target_name: filename };
                 showLockModal(true);
                 return;
             }
-            if (!confirm("Delete this item from Telegram storage?")) return;
-            await fetch(`/api/files/${id}`, {
-                method: 'DELETE',
-                headers: { 'X-Auth-Token': 'Allow' }
-            });
-            fetchCategoryFiles(currentTab === 'softwares' ? 'software' : (currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file')));
+            await executeDeleteFile(id, filename, cat);
+        }
+
+        async function executeDeleteFile(id, filename, category) {
+            if (!confirm(`Delete "${filename || 'this item'}" from Telegram storage?`)) return;
+            try {
+                const res = await fetch(`/api/files/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Auth-Token': 'Allow' }
+                });
+                if (res.status === 401) {
+                    lockApp();
+                    return;
+                }
+                fetchCategoryFiles(category || 'software');
+            } catch (err) {
+                console.error("Delete error:", err);
+                alert("Failed to delete file: " + err.message);
+            }
         }
 
         // ==================== SEND TEXT / NOTES ====================

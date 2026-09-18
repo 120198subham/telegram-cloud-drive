@@ -33,6 +33,9 @@ TODO_CHANNEL_ID: int = get_env_int("TELEGRAM_TODO_CHANNEL_ID", get_env_int("TODO
 # If not provided, it falls back to CHANNEL_ID
 SOFTWARE_CHANNEL_ID: int = get_env_int("TELEGRAM_SOFTWARE_CHANNEL_ID", get_env_int("SOFTWARE_CHANNEL_ID", CHANNEL_ID))
 
+# The target dedicated channel ID for OTP codes and security alerts
+OTP_CHANNEL_ID: int = get_env_int("TELEGRAM_OTP_CHANNEL_ID", 0)
+
 # Telethon session file name
 SESSION_NAME: str = os.getenv("TELEGRAM_SESSION_NAME", "telegram_cloud_session")
 
@@ -48,6 +51,18 @@ DEMO_STORAGE_DIR: Path = BASE_DIR / "demo_storage"
 DEMO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH: Path = BASE_DIR / "cloud_storage.db"
+
+# Telegram Owner User ID (where OTP codes & security alerts will be sent)
+# Obtain your User ID by messaging @userinfobot on Telegram
+OWNER_ID: int = get_env_int("TELEGRAM_OWNER_ID", get_env_int("OWNER_ID", 0))
+
+# OTP Authentication Security Parameters
+OTP_MAX_REQUESTS_PER_MIN: int = get_env_int("OTP_MAX_REQUESTS_PER_MIN", 4)
+OTP_EXPIRY_SECONDS: int = get_env_int("OTP_EXPIRY_SECONDS", 60)
+OTP_MAX_ATTEMPTS: int = get_env_int("OTP_MAX_ATTEMPTS", 5)
+OTP_LOCKOUT_SECONDS: int = get_env_int("OTP_LOCKOUT_SECONDS", 600)  # 10 minutes
+OTP_AUTO_DELETE_SECONDS: int = get_env_int("OTP_AUTO_DELETE_SECONDS", 180)  # 3 minutes auto-remove
+SESSION_COOKIE_AGE: int = get_env_int("SESSION_COOKIE_AGE", 24 * 60 * 60)  # 24 hours
 
 def is_telegram_configured() -> bool:
     """Returns True if all required credentials are present."""

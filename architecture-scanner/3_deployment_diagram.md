@@ -26,10 +26,11 @@ graph TB
     end
 
     subgraph TELEGRAM_INFRA["📡 Telegram MTProto Infrastructure"]
-        BOT_PROD["@my_cloud_vault_drive_bot\nAPI ID + API HASH + BOT TOKEN"]
-        CH1_PROD["Channel 1 (-1003983927893)\nFiles, Photos, Videos"]
-        CH2_PROD["Channel 2 (-1004382319669)\nTasks and Notes"]
-        CH3_PROD["Channel 3 (-1004334670893)\nSoftware Installers"]
+        BOT_PROD["Telegram Bot Engine\nAPI ID + API HASH + BOT TOKEN"]
+        CH1_PROD["Channel 1 (Storage Vault)\nFiles, Photos, Videos"]
+        CH2_PROD["Channel 2 (Task Vault)\nTasks and Notes"]
+        CH3_PROD["Channel 3 (Software Vault)\nSoftware Installers"]
+        CH4_PROD["Channel 4 (Security Vault)\nDedicated 3-Min Auto-Purge OTPs"]
         TG_DC["Telegram Data Center\nActual binary file bytes stored here\nFree, Unlimited, Permanent"]
     end
 
@@ -80,12 +81,13 @@ sequenceDiagram
 
 | Variable | Example Value | Where to Get |
 | :--- | :--- | :--- |
-| `TELEGRAM_API_ID` | `36759229` | [my.telegram.org](https://my.telegram.org) → API Development Tools |
-| `TELEGRAM_API_HASH` | `1762c8b8...` | Same as above |
-| `TELEGRAM_BOT_TOKEN` | `8876019799:AAH...` | [@BotFather](https://t.me/botfather) on Telegram |
-| `TELEGRAM_CHANNEL_ID` | `-1003983927893` | Forward a message to @JsonDumpBot |
-| `TELEGRAM_TODO_CHANNEL_ID` | `-1004382319669` | Same method as above |
-| `TELEGRAM_SOFTWARE_CHANNEL_ID` | `-1004334670893` | Same method as above |
+| `TELEGRAM_API_ID` | `YourApiID` | [my.telegram.org](https://my.telegram.org) → API Development Tools |
+| `TELEGRAM_API_HASH` | `YourApiHash` | Same as above |
+| `TELEGRAM_BOT_TOKEN` | `YourBotToken` | [@BotFather](https://t.me/botfather) on Telegram |
+| `TELEGRAM_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Storage Channel |
+| `TELEGRAM_TODO_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Todo & Notes Channel |
+| `TELEGRAM_SOFTWARE_CHANNEL_ID` | `-100xxxxxxxxxx` | Public Software Channel |
+| `TELEGRAM_OTP_CHANNEL_ID` | `-100xxxxxxxxxx` | Dedicated Security OTP Channel (3-min auto purge) |
 | `MAX_FILE_SIZE` | `2147483648` | 2 GB limit (fixed) |
 | `TELEGRAM_SESSION_NAME` | `telegram_cloud_session` | Used as session filename prefix |
 
