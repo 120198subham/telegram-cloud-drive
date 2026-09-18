@@ -20,13 +20,6 @@ cd /d "%APP_DIR%"
 timeout /t 3 /nobreak >nul
 
 :: ----------------------------------------------------------
-:: Start Tailscale HTTPS proxy (if Tailscale is installed)
-:: ----------------------------------------------------------
-if exist "C:\Program Files\Tailscale\tailscale.exe" (
-    "C:\Program Files\Tailscale\tailscale.exe" funnel --bg --yes 8000 >> "%LOG_FILE%" 2>&1
-)
-
-:: ----------------------------------------------------------
 :: Update deSEC Dynamic DNS (IPv4 + IPv6)
 :: ----------------------------------------------------------
 echo [%DATE% %TIME%] Syncing deSEC DynDNS... >> "%LOG_FILE%"
