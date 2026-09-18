@@ -713,8 +713,8 @@ class TelegramStorageClient:
         target_name = (context_info or {}).get("target_name")
 
         if self.is_demo or not self.client:
-            logger.info(f"[DEMO OTP] Verification code for {ip}: {code} (Tab: {tab_name}, Target: {target_name})")
-            return True, f"Demo Mode Active. Code: {code}"
+            logger.info(f"[DEMO OTP] Verification code generated for {ip} (Tab: {tab_name})")
+            return True, "Demo Mode: Verification session created."
 
         # If there is already an active OTP message for this IP, purge it from Telegram immediately
         await self.cancel_active_otp(ip)

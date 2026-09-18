@@ -37,7 +37,11 @@ SOFTWARE_CHANNEL_ID: int = get_env_int("TELEGRAM_SOFTWARE_CHANNEL_ID", get_env_i
 OTP_CHANNEL_ID: int = get_env_int("TELEGRAM_OTP_CHANNEL_ID", 0)
 
 # Cryptographic Secret Key for signing HMAC session cookies
-SESSION_SECRET: str = os.getenv("SESSION_SECRET", os.getenv("TELEGRAM_API_HASH", "ss_workspace_vault_secret_key_2026"))
+# Dynamically generates a cryptographically secure 256-bit random secret if not set in environment
+import secrets as _secrets
+_dynamic_secret: str = _secrets.token_hex(32)
+_configured_secret: str = os.getenv("SESSION_SECRET", os.getenv("TELEGRAM_API_HASH", "")).strip()
+SESSION_SECRET: str = _configured_secret if _configured_secret else _dynamic_secret
 
 # Optional admin password for fallback login (disabled by default unless explicitly configured)
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "").strip()

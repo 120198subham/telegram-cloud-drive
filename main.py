@@ -59,6 +59,7 @@ from database import (
     increment_otp_attempts,
     mark_otp_session_used,
     hash_otp_code,
+    get_otp_session_by_id,
 )
 from telegram_client import storage_client
 
@@ -199,7 +200,7 @@ async def auth_middleware(request: Request, call_next):
 
     # Validate HMAC-signed session token (from cookie or header)
     cookie_auth = request.cookies.get("tg_auth", "")
-    header_auth = request.headers.get("X-Session-Token", "") or request.headers.get("X-Auth-Token", "")
+    header_auth = request.headers.get("X-Session-Token", "")
     token = cookie_auth or header_auth
 
     if token and verify_signed_session_token(token):
@@ -367,8 +368,8 @@ async def send_otp(request: Request, payload: Optional[OtpSendRequest] = None):
         }
 
         if storage_client.is_demo:
-            logger.info(f"[SECURITY] Demo OTP generated for IP {ip}: {code}")
-            msg = "Demo Mode: Verification code generated and logged to secure console."
+            logger.info(f"[SECURITY] Demo OTP session created for IP {ip}")
+            msg = "Demo Mode: Verification session created."
         else:
             # Dispatch to dedicated Telegram OTP channel
             success, msg = await storage_client.send_otp_to_owner(code, ip, expiry_seconds=OTP_EXPIRY_SECONDS, context_info=context)
@@ -505,22 +506,24 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
     )
 
 @app.post("/api/auth/cancel-otp")
-async def cancel_otp(request: Request, payload: Optional[OtpCancelRequest] = None):
+async def cancel_otp(payload: Optional[OtpCancelRequest] = None):
     """
     Explicitly cancels the active OTP session and immediately purges the message from Telegram.
     Requires session_id verification to prevent unauthenticated IP-scoped denial of service attacks.
+    Identifies session strictly by session_id to eliminate spoofable forwarding header vulnerabilities.
     """
-    ip = get_client_ip(request)
     session_id = payload.session_id if payload and payload.session_id else None
     if not session_id:
         raise HTTPException(
             status_code=400,
             detail="Session ID is required to cancel an OTP session."
         )
-    tab = payload.tab if payload and payload.tab else None
-    cancelled = await cancel_otp_sessions(ip=ip, tab=tab, session_id=session_id)
-    if cancelled and storage_client:
-        await storage_client.cancel_active_otp(ip)
+    clean_session_id = session_id.strip()
+    session = await get_otp_session_by_id(clean_session_id)
+    if session:
+        await cancel_otp_sessions(session_id=clean_session_id)
+        if storage_client and session.get("ip"):
+            await storage_client.cancel_active_otp(session["ip"])
     return {"success": True, "message": "Active OTP was cancelled and purged."}
 
 @app.post("/api/auth/verify")

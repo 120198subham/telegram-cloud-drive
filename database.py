@@ -593,6 +593,14 @@ async def get_active_otp_session(ip: str, tab: Optional[str] = None) -> Optional
             return None
         return dict(row)
 
+async def get_otp_session_by_id(session_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve an OTP session record directly by its unique session ID."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM otp_sessions WHERE id = ?", (session_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
 async def increment_otp_attempts(session_id: str) -> int:
     """Increment the failed attempt count for an OTP session and return the new count."""
     async with aiosqlite.connect(DB_PATH) as db:
