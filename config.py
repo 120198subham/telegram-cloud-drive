@@ -30,11 +30,17 @@ CHANNEL_ID: int = get_env_int("TELEGRAM_CHANNEL_ID", get_env_int("CHANNEL_ID", 0
 TODO_CHANNEL_ID: int = get_env_int("TELEGRAM_TODO_CHANNEL_ID", get_env_int("TODO_CHANNEL_ID", CHANNEL_ID))
 
 # The target private channel ID for Softwares and Installers
-# If not provided, it falls back to CHANNEL_ID
-SOFTWARE_CHANNEL_ID: int = get_env_int("TELEGRAM_SOFTWARE_CHANNEL_ID", get_env_int("SOFTWARE_CHANNEL_ID", CHANNEL_ID))
+# If not explicitly configured, it is 0 (disabled public isolation)
+SOFTWARE_CHANNEL_ID: int = get_env_int("TELEGRAM_SOFTWARE_CHANNEL_ID", get_env_int("SOFTWARE_CHANNEL_ID", 0))
 
 # The target dedicated channel ID for OTP codes and security alerts
 OTP_CHANNEL_ID: int = get_env_int("TELEGRAM_OTP_CHANNEL_ID", 0)
+
+# Cryptographic Secret Key for signing HMAC session cookies
+SESSION_SECRET: str = os.getenv("SESSION_SECRET", os.getenv("TELEGRAM_API_HASH", "ss_workspace_vault_secret_key_2026"))
+
+# Optional admin password for fallback login (disabled by default unless explicitly configured)
+ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "").strip()
 
 # Telethon session file name
 SESSION_NAME: str = os.getenv("TELEGRAM_SESSION_NAME", "telegram_cloud_session")

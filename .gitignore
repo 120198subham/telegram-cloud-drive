@@ -18,6 +18,8 @@ env/
 uploads_temp/
 demo_storage/
 *.db
+*.db-journal
+*.db-wal
 *.sqlite3
 
 # Test artifacts

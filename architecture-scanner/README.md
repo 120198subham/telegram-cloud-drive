@@ -23,16 +23,16 @@ All diagrams use **Mermaid** syntax and render in GitHub, VS Code, and the Antig
 ```
 telegram-cloud-drive/
 ├── config.py              → Credentials loader (.env → constants)
-├── database.py            → SQLite CRUD (files, todos, notes)
-├── telegram_client.py     → MTProto engine (upload, download, messaging)
-├── main.py                → FastAPI routes + auth middleware + progress tracker
+├── database.py            → SQLite CRUD (files, todos, notes, otp_sessions)
+├── telegram_client.py     → MTProto engine (upload, download, messaging, OTP dispatch)
+├── main.py                → FastAPI routes + dynamic OTP security + progress tracker
 ├── static/
 │   ├── index.html         → Single-page app (Tailwind CSS, Vanilla JS)
 │   └── favicon.svg        → Cloud + vault icon
 ├── requirements.txt       → Python dependencies
 ├── run_server.bat         → Local Windows startup script
 ├── launch_silent.vbs      → Background launcher (no terminal window)
-├── test_app.py            → pytest automated tests
+├── test_app.py            → pytest automated tests (13 tests including Aikido security suite)
 └── architecture-scanner/  ← YOU ARE HERE
     ├── README.md
     ├── 1_flow_diagram.md

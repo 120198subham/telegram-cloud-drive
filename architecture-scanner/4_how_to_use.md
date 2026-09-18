@@ -10,16 +10,30 @@ SS Workspace is a personal cloud drive and productivity hub that uses **Telegram
 
 ---
 
-## Accessing the Site
+## Accessing the Site (Dynamic Telegram OTP Security)
 
 ### On Any Laptop or Phone:
 1. Open a browser (Chrome, Firefox, Edge, Safari).
-2. Go to your live URL.
-3. A **password prompt** will appear on the screen.
-4. Type the password: **`Allow`** and click **Unlock**.
-5. You're in! The password is remembered for **1 year** in your browser.
+2. Go to your live URL: `https://drive-ssworkspace.onrender.com`
+3. A **Telegram Security Access Shield** modal will appear on the screen.
+4. Click **Request Security Code (OTP)**.
+5. A 6-digit one-time passcode is instantly dispatched to your private **Telegram Security Channel** (Channel 4):
+   - The message details the **Target Tab** (e.g. `📂 Target Tab: Workspace Vault`) and the **Action** (e.g. `🔑 Action: Tab Security Access` or `⚠️ Action: 🗑️ Removing Item: setup.exe`).
+   - The code is valid for **60 seconds**, and the message automatically deletes from Telegram after **3 minutes**.
+6. Type the 6-digit code in the modal and click **Unlock Workspace**.
+7. You're in! Access is granted for **24 hours**.
 
-> **Note:** The Software tab is publicly accessible without a password so anyone can download installers directly.
+---
+
+## 🛡️ Advanced Security Shield Features
+
+- **Per-Tab Isolation**: Each OTP is tied to the tab where it was requested. If you switch tabs, the pending OTP is automatically cancelled in the database and immediately deleted from Telegram.
+- **Cross-Tab Protection**: Attempting to use a code from one tab on another tab is rejected (`400 Bad Request`) and instantly revokes the session.
+- **Option 3 Brute-Force Lockout**:
+  - You have **5 attempts** to enter the correct code.
+  - If 5 incorrect codes are entered, your IP is automatically **LOCKED OUT for 10 minutes**.
+  - An urgent **Security Alert** is dispatched to your Telegram Security Channel notifying you of the attempt and IP address.
+- **Public Software Tab**: The Software tab is **100% free of OTP** for visitors browsing and downloading installers. Only deleting or uploading files requires an OTP code.
 
 ---
 

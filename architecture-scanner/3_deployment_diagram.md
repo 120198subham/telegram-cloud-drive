@@ -46,8 +46,8 @@ graph TB
     FASTAPI_PROD --> TG_CLIENT_PROD
     FASTAPI_PROD --> SQLITE_PROD
     TG_CLIENT_PROD -->|"MTProto TCP\nPort 443 Encrypted"| BOT_PROD
-    BOT_PROD --> CH1_PROD & CH2_PROD & CH3_PROD
-    CH1_PROD & CH2_PROD & CH3_PROD --> TG_DC
+    BOT_PROD --> CH1_PROD & CH2_PROD & CH3_PROD & CH4_PROD
+    CH1_PROD & CH2_PROD & CH3_PROD & CH4_PROD --> TG_DC
     
     LOCAL_DEV --> GIT_PUSH --> REPO_PROD
     REPO_PROD --> WEBHOOK --> RENDER_SERVICE
@@ -84,10 +84,12 @@ sequenceDiagram
 | `TELEGRAM_API_ID` | `YourApiID` | [my.telegram.org](https://my.telegram.org) → API Development Tools |
 | `TELEGRAM_API_HASH` | `YourApiHash` | Same as above |
 | `TELEGRAM_BOT_TOKEN` | `YourBotToken` | [@BotFather](https://t.me/botfather) on Telegram |
-| `TELEGRAM_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Storage Channel |
-| `TELEGRAM_TODO_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Todo & Notes Channel |
-| `TELEGRAM_SOFTWARE_CHANNEL_ID` | `-100xxxxxxxxxx` | Public Software Channel |
-| `TELEGRAM_OTP_CHANNEL_ID` | `-100xxxxxxxxxx` | Dedicated Security OTP Channel (3-min auto purge) |
+| `TELEGRAM_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Storage Channel (Channel 1) |
+| `TELEGRAM_TODO_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Todo & Notes Channel (Channel 2) |
+| `TELEGRAM_SOFTWARE_CHANNEL_ID` | `-100xxxxxxxxxx` | Public Software Channel (Channel 3) |
+| `TELEGRAM_OTP_CHANNEL_ID` | `-100xxxxxxxxxx` | Dedicated Security OTP Channel (Channel 4, 3-min auto-purge) |
+| `TELEGRAM_OWNER_ID` | `482820076` | Personal Telegram User ID (alerts & DM fallback) |
+| `OTP_AUTO_DELETE_SECONDS` | `180` | Delay before Telegram deletes OTP messages (3 min) |
 | `MAX_FILE_SIZE` | `2147483648` | 2 GB limit (fixed) |
 | `TELEGRAM_SESSION_NAME` | `telegram_cloud_session` | Used as session filename prefix |
 
@@ -103,9 +105,9 @@ sequenceDiagram
     participant TG as Telegram MTProto
 
     RENDER->>FASTAPI: uvicorn main:app starts
-    FASTAPI->>DB: init_db() — CREATE TABLE IF NOT EXISTS files, todos, notes
+    FASTAPI->>DB: init_db() — CREATE TABLE files, todos, notes, otp_sessions
     FASTAPI->>TG: TelegramClient.start(bot_token=BOT_TOKEN)
-    TG-->>FASTAPI: Connected — bot info + channel entities resolved
+    TG-->>FASTAPI: Connected — bot info + 4 channel entities + owner resolved
     FASTAPI->>TG: sync_channel_messages() — scan channels 1 and 3 for new files
     TG-->>FASTAPI: N new files imported into SQLite catalog
     FASTAPI-->>RENDER: Application startup complete
@@ -165,12 +167,25 @@ sequenceDiagram
     end
 
     rect rgb(230, 255, 230)
-        Note over USER,API: AUTHENTICATION
+        Note over USER,TG: DYNAMIC TELEGRAM OTP AUTHENTICATION
         USER->>API: GET / — open site
         API-->>USER: Serve index.html and favicon.svg from static/
-        USER->>MW: POST /api/auth/verify — password Allow
+        USER->>API: GET /api/auth/status?tab=Documents
+        API-->>USER: {is_locked: false, has_active_otp: false}
+        USER->>MW: POST /api/auth/send-otp {"tab": "Documents"}
         MW-->>API: Public endpoint — bypass auth check
-        API-->>USER: Set-Cookie tg_auth=Allow 365 days — success
+        API->>DB: create_otp_session(ip, code, expiry=60, tab="Documents")
+        API->>TGC: send_otp_to_owner(code, ip, expiry=60, context)
+        TGC->>TG: send_message(Channel4, "[SS WORKSPACE LOGIN OTP] Code: 123456\nTarget Tab: Documents")
+        TG-->>TGC: message_id=5001
+        TGC->>TGC: Spawn _auto_delete_otp(Channel4, 5001, delay=180s)
+        API-->>USER: 200 OK — OTP dispatched to Security Channel
+        USER->>MW: POST /api/auth/verify-otp {"code": "123456", "tab": "Documents"}
+        MW-->>API: Public endpoint
+        API->>DB: get_active_otp_session(ip, tab="Documents")
+        DB-->>API: Session valid & matching tab
+        API->>DB: invalidate_otp_session(ip)
+        API-->>USER: Set-Cookie tg_auth=Allow 24 hours — success
     end
 
     rect rgb(255, 245, 220)

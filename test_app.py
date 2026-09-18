@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import os
 from httpx import AsyncClient, ASGITransport
-from main import app
+from main import app, create_signed_session_token
 from database import init_db, DB_PATH
 from config import BASE_DIR, UPLOAD_DIR, DEMO_STORAGE_DIR
 
@@ -34,16 +34,15 @@ async def test_full_workspace_api():
         unauth_resp = await client.get("/api/files")
         assert unauth_resp.status_code == 401
 
-        # 3. Test wrong password
-        bad_auth = await client.post("/api/auth/verify", json={"password": "wrong"})
-        assert bad_auth.status_code == 401
-
-        # 4. Test correct password "Allow"
-        auth_resp = await client.post("/api/auth/verify", json={"password": "Allow"})
-        assert auth_resp.status_code == 200
-
-        # Authenticated client with cookie
+        # 3. Test forged static cookie rejection (Aikido fix: Reliance on Cookies Without Integrity)
         client.cookies.set("tg_auth", "Allow")
+        forged_resp = await client.get("/api/files")
+        assert forged_resp.status_code == 401
+        client.cookies.clear()
+
+        # 4. Authenticate using cryptographically signed session token
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
 
         # 5. Upload file, photo, video
         # File
@@ -106,7 +105,7 @@ async def test_full_workspace_api():
         del_note = await client.delete(f"/api/notes/{n1_id}")
         assert del_note.status_code == 200
 
-        # 9. Test Softwares Tab (Public Access - No Password Required)
+        # 9. Test Softwares Tab (Public Access - Listing & Download)
         # Clear auth cookie to test as unauthenticated guest
         client.cookies.clear()
 
@@ -118,18 +117,24 @@ async def test_full_workspace_api():
         priv_list = await client.get("/api/files?category=file")
         assert priv_list.status_code == 401
 
-        # Upload software
+        # Public guest cannot upload files (Aikido fix: Improper Access Control)
+        guest_upload = await client.post("/api/upload?category=software", files={"file": ("setup.exe", b"installer bytes", "application/x-msdownload")})
+        assert guest_upload.status_code == 401
+
+        # Authenticated user uploads software
+        client.cookies.set("tg_auth", valid_token)
         soft_upload = await client.post("/api/upload?category=software", files={"file": ("setup.exe", b"installer bytes", "application/x-msdownload")})
         assert soft_upload.status_code == 200
         assert soft_upload.json()["category"] == "software"
         soft_id = soft_upload.json()["id"]
+        client.cookies.clear()
 
         # Public user can view the uploaded software
         soft_list2 = await client.get("/api/files?category=software")
         assert soft_list2.status_code == 200
         assert any(f["id"] == soft_id for f in soft_list2.json()["files"])
 
-        # Public user can download software without password
+        # Public user can download software
         soft_download = await client.get(f"/api/download/{soft_id}")
         assert soft_download.status_code == 200
         assert soft_download.content == b"installer bytes"
@@ -144,6 +149,7 @@ async def test_full_workspace_api():
         assert any(f["id"] == soft_id for f in soft_prefetch.json()["files"])
 
         # 11. Test Upload with upload_id tracking & /api/upload-progress/{upload_id}
+        client.cookies.set("tg_auth", valid_token)
         test_uid = "test-upload-uuid-1234"
         up_track_resp = await client.post(
             f"/api/upload?category=software&upload_id={test_uid}",
@@ -179,7 +185,7 @@ async def test_fast_upload_file_parallel():
     mock_client.side_effect = mock_call
     client_instance.client = mock_client
 
-    test_file = BASE_DIR / "test_big_upload.bin"
+    test_file = UPLOAD_DIR / "test_big_upload.bin"
     chunk_size = 512 * 1024
     total_chunks = 4
     test_size = chunk_size * total_chunks
@@ -297,9 +303,9 @@ async def test_telegram_otp_full_lifecycle(monkeypatch):
         verify_resp = await client.post("/api/auth/verify-otp", json={"code": captured_code})
         assert verify_resp.status_code == 200
         assert "tg_auth" in verify_resp.cookies
+        assert "session_token" in verify_resp.json()
 
         # 4. Access protected endpoint with issued cookie
-        client.cookies.set("tg_auth", "Allow")
         files_resp = await client.get("/api/files")
         assert files_resp.status_code == 200
 
@@ -421,4 +427,133 @@ async def test_telegram_otp_explicit_cancel(monkeypatch):
         verify_fresh = await client.post("/api/auth/verify-otp", json={"code": second_code, "tab": "Videos Vault"})
         assert verify_fresh.status_code == 200
         assert verify_fresh.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_security_headers_and_csp():
+    """Verify that Content-Security-Policy (CSP) and defense-in-depth headers are enforced (Aikido fix)."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Test root endpoint
+        resp = await client.get("/")
+        assert resp.status_code == 200
+        assert "Content-Security-Policy" in resp.headers
+
+        csp = resp.headers["Content-Security-Policy"]
+        assert "default-src 'self'" in csp
+        assert "script-src" in csp
+        assert "https://cdn.tailwindcss.com" in csp
+        assert "https://unpkg.com" in csp
+        assert "style-src" in csp
+        assert "frame-ancestors 'none'" in csp
+        assert "object-src 'none'" in csp
+        assert "base-uri 'self'" in csp
+
+        # Verify other critical defense-in-depth security headers (Aikido fixes)
+        assert resp.headers.get("Strict-Transport-Security") == "max-age=63072000; includeSubDomains; preload"
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+        assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+        assert "geolocation=()" in resp.headers.get("Permissions-Policy", "")
+        assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
+
+        # Verify self-hosted Lucide icon script (SRI fix)
+        lucide_resp = await client.get("/static/lucide.min.js")
+        assert lucide_resp.status_code == 200
+        assert len(lucide_resp.content) > 100000
+
+        # Test API endpoint also receives CSP, HSTS, and security headers
+        api_resp = await client.get("/api/status")
+        assert api_resp.status_code == 200
+        assert "Content-Security-Policy" in api_resp.headers
+        assert "Strict-Transport-Security" in api_resp.headers
+        assert api_resp.headers.get("X-Frame-Options") == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_demo_mode_does_not_disclose_otp():
+    """Aikido fix: Verify fail-open demo mode never discloses OTP in JSON response."""
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.post("/api/auth/send-otp")
+        assert res.status_code == 200
+        data = res.json()
+        assert "demo_code" not in data or data.get("demo_code") is None
+        assert "session_id" in data
+
+
+@pytest.mark.asyncio
+async def test_hmac_session_cookie_integrity():
+    """Aikido fix: Verify cookies without HMAC integrity or with tampered signatures are rejected."""
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Case 1: Legacy "Allow" string
+        client.cookies.set("tg_auth", "Allow")
+        assert (await client.get("/api/files")).status_code == 401
+
+        # Case 2: Tampered payload
+        valid_token = create_signed_session_token()
+        parts = valid_token.split(".")
+        tampered_token = f"{int(parts[0]) + 1000}.{parts[1]}.{parts[2]}"
+        client.cookies.set("tg_auth", tampered_token)
+        assert (await client.get("/api/files")).status_code == 401
+
+        # Case 3: Tampered signature
+        tampered_sig = f"{parts[0]}.{parts[1]}.deadbeefcafe"
+        client.cookies.set("tg_auth", tampered_sig)
+        assert (await client.get("/api/files")).status_code == 401
+
+        # Case 4: Expired token
+        expired_token = create_signed_session_token(expiry_seconds=-10)
+        client.cookies.set("tg_auth", expired_token)
+        assert (await client.get("/api/files")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upload_path_traversal_prevention():
+    """Aikido fix: Verify directory traversal in upload filenames is sanitized and contained."""
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
+        # Attempt path traversal filename
+        res = await client.post(
+            "/api/upload",
+            files={"file": ("../../../../etc/passwd", b"root:x:0:0:", "text/plain")}
+        )
+        assert res.status_code == 200
+        filename = res.json()["filename"]
+        assert ".." not in filename
+        assert "/" not in filename
+        assert "\\" not in filename
+        assert filename == "passwd"
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_software_download_isolation():
+    """Aikido fix: Verify unauthenticated users cannot download non-software files."""
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
+        # Upload private document
+        doc_res = await client.post(
+            "/api/upload",
+            files={"file": ("secret_vault.txt", b"my_private_key", "text/plain")}
+        )
+        assert doc_res.status_code == 200
+        doc_id = doc_res.json()["id"]
+
+        # Clear authentication
+        client.cookies.clear()
+        # Attempt unauthenticated download of private vault file
+        dl_res = await client.get(f"/api/download/{doc_id}")
+        assert dl_res.status_code == 401
+
+
+
 

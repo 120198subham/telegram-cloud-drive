@@ -528,22 +528,29 @@ async def create_otp_session(
         "target_name": target_name
     }
 
-async def cancel_otp_sessions(ip: str, tab: Optional[str] = None) -> int:
+async def cancel_otp_sessions(ip: Optional[str] = None, tab: Optional[str] = None, session_id: Optional[str] = None) -> int:
     """
-    Explicitly cancels/invalidates active unused OTP sessions for this IP.
-    Called when a user switches tabs, closes the lock modal, or an invalid cross-tab attempt is made.
+    Explicitly cancels/invalidates active unused OTP sessions.
+    Supports session_id verification to prevent unauthenticated IP spoofing attacks.
     """
     async with aiosqlite.connect(DB_PATH) as db:
-        if tab:
+        if session_id:
+            cursor = await db.execute("""
+                UPDATE otp_sessions SET cancelled = 1, used = 1
+                WHERE id = ? AND used = 0
+            """, (session_id,))
+        elif tab and ip:
             cursor = await db.execute("""
                 UPDATE otp_sessions SET cancelled = 1, used = 1
                 WHERE ip = ? AND used = 0 AND LOWER(tab) = LOWER(?)
             """, (ip, tab))
-        else:
+        elif ip:
             cursor = await db.execute("""
                 UPDATE otp_sessions SET cancelled = 1, used = 1
                 WHERE ip = ? AND used = 0
             """, (ip,))
+        else:
+            return 0
         await db.commit()
         return cursor.rowcount
 

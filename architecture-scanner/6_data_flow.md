@@ -203,6 +203,19 @@ erDiagram
         INTEGER is_demo "0=live, 1=demo"
         TEXT created_at "ISO 8601 UTC"
     }
+
+    OTP_SESSIONS {
+        INTEGER id PK "Auto-increment ID"
+        TEXT ip "Client IP address"
+        TEXT code "6-digit OTP passcode"
+        REAL created_at "Epoch seconds"
+        REAL expires_at "Epoch seconds"
+        INTEGER attempts "Failed count (lockout at 5)"
+        TEXT tab "Bound requested tab"
+        TEXT action "access or delete_file"
+        TEXT target_name "File name if delete action"
+        INTEGER cancelled "1=cancelled, 0=active"
+    }
 ```
 
 ---
@@ -244,11 +257,11 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     A([Request hits server]) --> B[auth_middleware reads request]
-    B --> C{Is path public?\n/api/status, /api/prefetch,\n/static/*, /}
+    B --> C{Is path public?\n/api/status, /api/auth/*,\n/api/prefetch, /static/*, /}
     C -->|Yes| PASS([Allow through])
     C -->|No| D{Is it software list/download?}
     D -->|Yes| PASS
-    D -->|No| E{Cookie tg_auth == Allow?}
+    D -->|No| E{Cookie tg_auth valid?\n24-hour lifetime}
     E -->|Yes| PASS
     E -->|No| F{Header X-Auth-Token == Allow?}
     F -->|Yes| PASS

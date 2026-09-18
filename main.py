@@ -3,6 +3,9 @@ import time
 import asyncio
 import secrets
 import urllib.parse
+import hmac
+import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -26,6 +29,8 @@ from config import (
     OTP_MAX_ATTEMPTS,
     OTP_LOCKOUT_SECONDS,
     SESSION_COOKIE_AGE,
+    SESSION_SECRET,
+    ADMIN_PASSWORD,
     is_telegram_configured,
 )
 from database import (
@@ -57,14 +62,47 @@ from database import (
 )
 from telegram_client import storage_client
 
+# ==================== CRYPTOGRAPHIC SESSION SIGNING (HMAC-SHA256) ====================
+
+def create_signed_session_token(expiry_seconds: int = SESSION_COOKIE_AGE) -> str:
+    """Generate a cryptographically signed HMAC-SHA256 session token with expiration and random nonce."""
+    expires_at = int(time.time()) + expiry_seconds
+    nonce = secrets.token_hex(16)
+    payload = f"{expires_at}.{nonce}"
+    signature = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+def verify_signed_session_token(token: str) -> bool:
+    """Verify HMAC-SHA256 signature and timestamp of session token."""
+    if not token or "." not in token:
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    expires_at_str, nonce, signature = parts
+    try:
+        expires_at = int(expires_at_str)
+    except ValueError:
+        return False
+    if time.time() > expires_at:
+        return False
+    payload = f"{expires_at}.{nonce}"
+    expected_sig = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected_sig)
+
 def get_client_ip(request: Request) -> str:
-    """Extract real client IP address considering proxy headers."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    """Extract client IP address safely without trusting unverified spoofed forward headers."""
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()
     real_ip = request.headers.get("X-Real-IP")
     if real_ip:
         return real_ip.strip()
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        ips = [x.strip() for x in forwarded.split(",") if x.strip()]
+        if ips:
+            return ips[0]
     return request.client.host if request.client else "127.0.0.1"
 
 @asynccontextmanager
@@ -93,7 +131,34 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition", "Content-Type", "Accept-Ranges"],
 )
 
-# Authentication Middleware: Protects API with dynamic OTP / session cookie (Softwares tab is public)
+# Security Headers Middleware: Enforces HSTS, Content-Security-Policy (CSP) & Defense-in-Depth Headers
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    # Content-Security-Policy declaration for scripts, styles, images, media, and fonts
+    csp_directives = [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com",
+        "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com",
+        "img-src 'self' data: blob: https:",
+        "media-src 'self' blob: data:",
+        "font-src 'self' data: https:",
+        "connect-src 'self' https://cdn.tailwindcss.com",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    ]
+    response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
+
+# Authentication Middleware: Enforces HMAC-signed session tokens and strict channel access control
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -101,11 +166,11 @@ async def auth_middleware(request: Request, call_next):
     if (
         not path.startswith("/api/")
         or path in [
-            "/api/auth/verify",
             "/api/auth/send-otp",
             "/api/auth/verify-otp",
             "/api/auth/cancel-otp",
             "/api/auth/status",
+            "/api/auth/verify",
             "/api/status",
             "/api/prefetch",
         ]
@@ -113,31 +178,31 @@ async def auth_middleware(request: Request, call_next):
     ):
         return await call_next(request)
 
-    # Public Softwares category: no password/OTP required to list, upload, or download software
+    # Public Softwares category: viewing files is allowed if category is software
     if path == "/api/files" and request.method == "GET" and request.query_params.get("category") == "software":
         return await call_next(request)
 
-    if path == "/api/upload" and request.method == "POST" and request.query_params.get("category") == "software":
-        return await call_next(request)
-
+    # Public Softwares download: ONLY allowed if SOFTWARE_CHANNEL_ID is active and file belongs to that channel
     if path.startswith("/api/download/") and request.method == "GET":
         file_id = path.split("/api/download/")[-1].split("?")[0]
         try:
             file_rec = await get_file(file_id)
-            if file_rec and file_rec.get("category") == "software":
+            if (
+                file_rec
+                and file_rec.get("category") == "software"
+                and SOFTWARE_CHANNEL_ID != 0
+                and file_rec.get("telegram_channel_id") == SOFTWARE_CHANNEL_ID
+            ):
                 return await call_next(request)
         except Exception:
             pass
 
+    # Validate HMAC-signed session token (from cookie or header)
     cookie_auth = request.cookies.get("tg_auth", "")
-    header_auth = request.headers.get("X-Auth-Token", "")
-    query_auth = request.query_params.get("auth", "")
+    header_auth = request.headers.get("X-Session-Token", "") or request.headers.get("X-Auth-Token", "")
+    token = cookie_auth or header_auth
 
-    if (
-        cookie_auth.lower() in ["allow", "authenticated"]
-        or header_auth.lower() in ["allow", "authenticated"]
-        or query_auth.lower() in ["allow", "authenticated"]
-    ):
+    if token and verify_signed_session_token(token):
         return await call_next(request)
 
     return JSONResponse(
@@ -159,6 +224,11 @@ class OtpVerifyRequest(BaseModel):
     tab: Optional[str] = None
     action: Optional[str] = None
     target_name: Optional[str] = None
+    session_id: Optional[str] = None
+
+class OtpCancelRequest(BaseModel):
+    tab: Optional[str] = None
+    session_id: Optional[str] = None
 
 class TodoCreate(BaseModel):
     title: str
@@ -172,6 +242,11 @@ class NoteCreate(BaseModel):
 # Auto-Prefetch Debouncing Mechanism
 _last_prefetch_time = 0.0
 _prefetch_lock = asyncio.Lock()
+
+# Per-IP prefetch rate limiting: max 1 forced prefetch per 30 seconds per IP
+_prefetch_ip_timestamps: Dict[str, float] = {}
+_PREFETCH_IP_COOLDOWN = 30.0
+_PREFETCH_IP_MAX = 500  # max tracked IPs before evicting oldest
 
 async def auto_prefetch(force: bool = False) -> int:
     """Debounced prefetch of latest files from Telegram channels."""
@@ -193,39 +268,30 @@ async def auto_prefetch(force: bool = False) -> int:
 
 @app.get("/api/auth/status")
 async def get_auth_status(request: Request, tab: Optional[str] = None):
-    """Retrieve current client IP lockout and OTP countdown telemetry."""
+    """Retrieve lockout and OTP countdown only — no sensitive session metadata exposed."""
     ip = get_client_ip(request)
     is_locked, remaining_lockout = await check_ip_lockout(ip)
     active_otp = await get_active_otp_session(ip)
     remaining_otp = 0
-    attempts_used = 0
     active_tab = None
-    active_action = None
-    active_target_name = None
     cross_tab = False
 
     if active_otp:
         now_dt = datetime.now(timezone.utc)
         exp_dt = datetime.fromisoformat(active_otp["expires_at"])
         remaining_otp = max(0, int((exp_dt - now_dt).total_seconds()))
-        attempts_used = active_otp.get("attempts", 0)
         active_tab = active_otp.get("tab")
-        active_action = active_otp.get("action")
-        active_target_name = active_otp.get("target_name")
         if tab and active_tab and tab.strip().lower() != active_tab.strip().lower():
             cross_tab = True
 
+    # NOTE: tab, action, target_name, attempts_used are intentionally omitted
+    # from unauthenticated status responses to prevent IP-scoped metadata leakage
     return {
-        "ip": ip,
         "is_locked": is_locked,
         "lockout_remaining_seconds": remaining_lockout,
         "has_active_otp": remaining_otp > 0 and not cross_tab,
         "otp_remaining_seconds": remaining_otp if not cross_tab else 0,
-        "attempts_used": attempts_used,
         "max_attempts": OTP_MAX_ATTEMPTS,
-        "tab": active_tab,
-        "action": active_action,
-        "target_name": active_target_name,
         "cross_tab": cross_tab,
         "is_demo": storage_client.is_demo,
     }
@@ -284,19 +350,23 @@ async def send_otp(request: Request, payload: Optional[OtpSendRequest] = None):
         "target_name": target_name
     }
 
-    # Dispatch to dedicated Telegram OTP channel
-    success, msg = await storage_client.send_otp_to_owner(code, ip, expiry_seconds=OTP_EXPIRY_SECONDS, context_info=context)
-    if not success and not storage_client.is_demo:
-        raise HTTPException(status_code=500, detail=msg)
+    if storage_client.is_demo:
+        logger.info(f"[SECURITY] Demo OTP generated for IP {ip}: {code}")
+        msg = "Demo Mode: Verification code generated and logged to secure console."
+    else:
+        # Dispatch to dedicated Telegram OTP channel
+        success, msg = await storage_client.send_otp_to_owner(code, ip, expiry_seconds=OTP_EXPIRY_SECONDS, context_info=context)
+        if not success:
+            raise HTTPException(status_code=500, detail=msg)
 
     return {
         "success": True,
-        "message": msg if not storage_client.is_demo else f"Demo Mode: Verification code is {code}",
+        "message": msg,
         "expires_in": OTP_EXPIRY_SECONDS,
         "tab": target_tab,
         "action": target_action,
         "target_name": target_name,
-        "demo_code": code if storage_client.is_demo else None
+        "session_id": session_data["id"]
     }
 
 @app.post("/api/auth/verify-otp")
@@ -304,10 +374,11 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
     """
     Verify 6-digit OTP code.
     Enforces:
+    - Session ID verification (if provided) to prevent cross-session hijacking
     - Cross-tab cancellation: OTP issued for one tab is strictly forbidden on another tab and immediately cancelled!
     - Option 3: 5 failed attempts triggers 10-minute lockout + Security Alert to owner
     - 1-minute expiration
-    - 24-hour session cookie issuance
+    - 24-hour cryptographically signed HMAC session token issuance
     """
     ip = get_client_ip(request)
     is_locked, remaining_lockout = await check_ip_lockout(ip)
@@ -322,6 +393,13 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
         raise HTTPException(
             status_code=400,
             detail="No active OTP found. The code may have expired or been cancelled. Please request a fresh OTP."
+        )
+
+    # Validate session_id if provided
+    if payload.session_id and active_otp.get("id") != payload.session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session mismatch or expired OTP session. Please request a fresh OTP."
         )
 
     # Cross-tab OTP check: verify target tab matches issued tab
@@ -368,15 +446,19 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
         await mark_otp_session_used(active_otp["id"])
         if storage_client:
             await storage_client.cancel_active_otp(ip)
+        signed_token = create_signed_session_token()
+        is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
         response.set_cookie(
             key="tg_auth",
-            value="Allow",
+            value=signed_token,
             max_age=SESSION_COOKIE_AGE,
-            httponly=False,
-            samesite="lax"
+            httponly=True,
+            samesite="lax",
+            secure=is_secure
         )
         return {
             "success": True,
+            "session_token": signed_token,
             "tab": active_otp.get("tab"),
             "action": active_otp.get("action"),
             "message": "Authentication successful. Access granted for 24 hours."
@@ -407,27 +489,40 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
     )
 
 @app.post("/api/auth/cancel-otp")
-async def cancel_otp(request: Request, payload: Optional[OtpSendRequest] = None):
+async def cancel_otp(request: Request, payload: Optional[OtpCancelRequest] = None):
     """Explicitly cancels the active OTP session and immediately purges the message from Telegram."""
     ip = get_client_ip(request)
     tab = payload.tab if payload and payload.tab else None
-    await cancel_otp_sessions(ip, tab=tab)
+    session_id = payload.session_id if payload and payload.session_id else None
+    await cancel_otp_sessions(ip=ip, tab=tab, session_id=session_id)
     if storage_client:
         await storage_client.cancel_active_otp(ip)
     return {"success": True, "message": "Active OTP was cancelled and purged."}
 
 @app.post("/api/auth/verify")
-async def verify_password(payload: AuthRequest, response: Response):
-    """Fallback password verification and 24-hour session cookie issuance."""
-    if payload.password.strip().lower() == "allow":
+async def verify_password(payload: AuthRequest, request: Request, response: Response):
+    """Fallback password verification and 24-hour HMAC signed session cookie issuance."""
+    if not ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=403,
+            detail="Password authentication is disabled. Please authenticate using Telegram OTP."
+        )
+    if secrets.compare_digest(payload.password.strip(), ADMIN_PASSWORD):
+        signed_token = create_signed_session_token()
+        is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
         response.set_cookie(
             key="tg_auth",
-            value="Allow",
+            value=signed_token,
             max_age=SESSION_COOKIE_AGE,
-            httponly=False,
-            samesite="lax"
+            httponly=True,
+            samesite="lax",
+            secure=is_secure
         )
-        return {"success": True, "message": "Authenticated"}
+        return {
+            "success": True,
+            "session_token": signed_token,
+            "message": "Authenticated successfully."
+        }
     raise HTTPException(status_code=401, detail="Incorrect password.")
 
 @app.get("/api/status")
@@ -443,8 +538,19 @@ async def get_system_status():
 
 @app.get("/api/prefetch")
 @app.post("/api/prefetch")
-async def prefetch_files(force: bool = Query(False)):
-    """Trigger a background prefetch of files from Telegram channels."""
+async def prefetch_files(request: Request, force: bool = Query(False)):
+    """Trigger a debounced prefetch of files from Telegram channels (rate-limited per IP)."""
+    if force:
+        ip = get_client_ip(request)
+        now = time.time()
+        last = _prefetch_ip_timestamps.get(ip, 0.0)
+        if now - last < _PREFETCH_IP_COOLDOWN:
+            return {"success": False, "imported_files": 0, "detail": "Rate limited. Try again shortly."}
+        # Evict oldest if map is too large
+        if len(_prefetch_ip_timestamps) >= _PREFETCH_IP_MAX:
+            oldest_ip = min(_prefetch_ip_timestamps, key=_prefetch_ip_timestamps.get)
+            del _prefetch_ip_timestamps[oldest_ip]
+        _prefetch_ip_timestamps[ip] = now
     imported = await auto_prefetch(force=force)
     return {"success": True, "imported_files": imported}
 
@@ -469,11 +575,16 @@ async def list_files(
     return {"files": files, "count": len(files)}
 
 # Upload Progress Tracking (upload_id -> progress metrics)
+# Bounded to 500 entries max — oldest evicted on overflow to prevent DoS memory exhaustion
 upload_progress_tracker: Dict[str, Dict[str, Any]] = {}
+_UPLOAD_TRACKER_MAX = 500
+_UPLOAD_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]{8,64}$')
 
 @app.get("/api/upload-progress/{upload_id}")
 async def get_upload_progress(upload_id: str):
     """Retrieve real-time transfer progress of file streaming to Telegram."""
+    if not _UPLOAD_ID_PATTERN.match(upload_id):
+        return {"status": "not_found", "percent": 0.0, "speed_mbs": 0.0, "speed_mbps": 0.0, "eta_seconds": 0}
     info = upload_progress_tracker.get(upload_id)
     if not info:
         return {"status": "not_found", "percent": 0.0, "speed_mbs": 0.0, "speed_mbps": 0.0, "eta_seconds": 0}
@@ -491,22 +602,40 @@ async def upload_file(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
+    # Prevent Path Traversal in uploaded file
+    safe_filename = Path(file.filename).name
+    if not safe_filename or safe_filename in [".", ".."]:
+        safe_filename = "unnamed_file"
+    sanitized_name = re.sub(r'[^\w\.\-]', '_', safe_filename)
+
     chosen_cat = category or cat_query
-    cat = chosen_cat if chosen_cat in ["file", "photo", "video", "software"] else detect_category(file.filename, file.content_type)
-    temp_filename = f"upload_{os.urandom(8).hex()}_{file.filename}"
-    temp_path = UPLOAD_DIR / temp_filename
+    cat = chosen_cat if chosen_cat in ["file", "photo", "video", "software"] else detect_category(safe_filename, file.content_type)
+    
+    unique_prefix = f"upload_{secrets.token_hex(16)}"
+    temp_path = (UPLOAD_DIR / f"{unique_prefix}_{sanitized_name}").resolve()
+    upload_dir_resolved = UPLOAD_DIR.resolve()
+    if not temp_path.is_relative_to(upload_dir_resolved):
+        raise HTTPException(status_code=400, detail="Invalid filename or path traversal detected.")
 
     uid = upload_id or upload_id_query
     if uid:
-        upload_progress_tracker[uid] = {
-            "current": 0,
-            "total": 0,
-            "percent": 0.0,
-            "speed_mbs": 0.0,
-            "speed_mbps": 0.0,
-            "eta_seconds": 0,
-            "status": "uploading_to_server"
-        }
+        # Validate upload_id format to reject malicious keys
+        if not _UPLOAD_ID_PATTERN.match(uid):
+            uid = None
+        else:
+            # Evict oldest entry if at capacity
+            if len(upload_progress_tracker) >= _UPLOAD_TRACKER_MAX:
+                oldest_uid = next(iter(upload_progress_tracker))
+                del upload_progress_tracker[oldest_uid]
+            upload_progress_tracker[uid] = {
+                "current": 0,
+                "total": 0,
+                "percent": 0.0,
+                "speed_mbs": 0.0,
+                "speed_mbps": 0.0,
+                "eta_seconds": 0,
+                "status": "uploading_to_server"
+            }
 
     total_uploaded = 0
     try:
@@ -556,14 +685,14 @@ async def upload_file(
         # Upload to Storage Channel
         msg_id, channel_id, tg_file_id = await storage_client.upload_file(
             file_path=temp_path,
-            filename=file.filename,
+            filename=safe_filename,
             category=cat,
             progress_callback=progress_cb if uid else None
         )
 
         # Save to SQLite
         file_record = await add_file(
-            filename=file.filename,
+            filename=safe_filename,
             size=total_uploaded,
             mime_type=file.content_type or "application/octet-stream",
             telegram_message_id=msg_id,
@@ -655,6 +784,8 @@ async def create_todo(payload: TodoCreate):
     clean_title = payload.title.strip()
     if not clean_title:
         raise HTTPException(status_code=400, detail="Task title cannot be empty.")
+    if len(clean_title) > 1000:
+        raise HTTPException(status_code=400, detail="Task title must be 1000 characters or fewer.")
 
     msg_id, channel_id = await storage_client.send_todo_message(clean_title)
     todo = await add_todo(
@@ -721,6 +852,8 @@ async def create_note(payload: NoteCreate):
     clean_content = payload.content.strip()
     if not clean_content:
         raise HTTPException(status_code=400, detail="Note content cannot be empty.")
+    if len(clean_content) > 10_000:
+        raise HTTPException(status_code=400, detail="Note content must be 10,000 characters or fewer.")
 
     msg_id, channel_id = await storage_client.send_note_message(clean_content)
     note = await add_note(

@@ -15,6 +15,7 @@ from config import (
     OTP_AUTO_DELETE_SECONDS,
     SESSION_NAME,
     DEMO_STORAGE_DIR,
+    UPLOAD_DIR,
     OWNER_ID,
     is_telegram_configured,
 )
@@ -325,6 +326,12 @@ class TelegramStorageClient:
         """
         from telethon import functions, types, helpers
 
+        file_path = Path(file_path).resolve()
+        # Defensive boundary check: file must reside in an approved directory
+        upload_dir_r = UPLOAD_DIR.resolve()
+        demo_dir_r = DEMO_STORAGE_DIR.resolve()
+        if not (file_path.is_relative_to(upload_dir_r) or file_path.is_relative_to(demo_dir_r)):
+            raise ValueError(f"Path traversal detected: file_path '{file_path}' is outside approved directories.")
         file_size = os.path.getsize(file_path)
         part_size = 512 * 1024  # 512 KB chunks (Telegram MTProto maximum)
         part_count = (file_size + part_size - 1) // part_size
@@ -405,12 +412,21 @@ class TelegramStorageClient:
         progress_callback=None
     ) -> Tuple[int, int, Optional[str]]:
         """Uploads a file directly into the Telegram storage channel as a message with document attachment."""
+        # Defensive boundary check: file_path must resolve within approved directories
+        file_path = Path(file_path).resolve()
+        upload_dir_r = UPLOAD_DIR.resolve()
+        demo_dir_r = DEMO_STORAGE_DIR.resolve()
+        if not (file_path.is_relative_to(upload_dir_r) or file_path.is_relative_to(demo_dir_r)):
+            raise ValueError(f"Path traversal detected in upload_file: '{file_path}'")
         target_channel_id = SOFTWARE_CHANNEL_ID if (category == "software" and SOFTWARE_CHANNEL_ID != 0) else CHANNEL_ID
 
         if self.is_demo or not self.client:
             self._demo_counter += 1
             demo_msg_id = self._demo_counter
-            demo_dest = DEMO_STORAGE_DIR / f"{demo_msg_id}_{filename}"
+            clean_name = Path(filename).name
+            demo_dest = (DEMO_STORAGE_DIR / f"{demo_msg_id}_{clean_name}").resolve()
+            if not demo_dest.is_relative_to(DEMO_STORAGE_DIR.resolve()):
+                raise ValueError("Path traversal attempt detected in filename.")
             total_size = os.path.getsize(file_path)
             copied = 0
             with open(file_path, "rb") as src, open(demo_dest, "wb") as dst:
@@ -573,7 +589,10 @@ class TelegramStorageClient:
     ) -> AsyncGenerator[bytes, None]:
         """Stream chunks directly from Telegram message."""
         if is_demo or self.is_demo or not self.client:
-            demo_path = DEMO_STORAGE_DIR / f"{telegram_message_id}_{filename}"
+            clean_name = Path(filename).name
+            demo_path = (DEMO_STORAGE_DIR / f"{telegram_message_id}_{clean_name}").resolve()
+            if not demo_path.is_relative_to(DEMO_STORAGE_DIR.resolve()):
+                raise ValueError("Path traversal attempt detected in filename.")
             if not demo_path.exists():
                 raise FileNotFoundError(f"File {filename} not found in demo storage.")
             with open(demo_path, "rb") as f:
@@ -661,8 +680,9 @@ class TelegramStorageClient:
         """Deletes any message from Telegram (Storage, Software, or Todo channel)."""
         if is_demo or self.is_demo or not self.client:
             if filename:
-                demo_path = DEMO_STORAGE_DIR / f"{message_id}_{filename}"
-                if demo_path.exists():
+                clean_name = Path(filename).name
+                demo_path = (DEMO_STORAGE_DIR / f"{message_id}_{clean_name}").resolve()
+                if demo_path.is_relative_to(DEMO_STORAGE_DIR.resolve()) and demo_path.exists():
                     try:
                         demo_path.unlink()
                     except Exception:

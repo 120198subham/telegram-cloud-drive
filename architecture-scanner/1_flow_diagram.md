@@ -20,7 +20,10 @@ flowchart TD
     %% ─── FASTAPI LAYER ───
     subgraph FASTAPI["⚙️ FastAPI — main.py"]
         AUTH_MW["auth_middleware\nChecks cookie / header / query token"]
-        AUTH_EP["/api/auth/verify\nIssue 365-day cookie"]
+        AUTH_STATUS_EP["/api/auth/status\nLockout status + cross-tab check"]
+        AUTH_SEND_EP["/api/auth/send-otp\nRate limit 4/min → Dispatch to Ch4"]
+        AUTH_VERIFY_EP["/api/auth/verify-otp\nCheck code + tab match → Set 24h cookie"]
+        AUTH_CANCEL_EP["/api/auth/cancel-otp\nCancel session + Purge Telegram message"]
         STATUS_EP["/api/status\nHealth + channel info"]
         UPLOAD_EP["/api/upload\nStream → Temp → Telegram → SQLite"]
         PROGRESS_EP["/api/upload-progress/id\nRead progress dict"]
@@ -36,28 +39,32 @@ flowchart TD
 
     %% ─── CONFIG LAYER ───
     subgraph CONFIG["🔧 config.py"]
-        ENV[".env File\nAPI_ID, API_HASH, BOT_TOKEN\nCHANNEL_ID ×3, MAX_FILE_SIZE"]
+        ENV[".env File\nAPI_ID, API_HASH, BOT_TOKEN\nCHANNEL_ID ×4, OWNER_ID\nOTP Limits & Timers"]
         IS_CONFIGURED["is_telegram_configured()\nTrue → Live Mode\nFalse → Demo Mode"]
     end
 
     %% ─── DATABASE LAYER ───
     subgraph DATABASE["🗄️ database.py + SQLite"]
-        INIT_DB["init_db()\nCREATE TABLE files, todos, notes"]
+        INIT_DB["init_db()\nCREATE TABLE files, todos, notes, otp_sessions\nAuto-migrate tab/action/cancelled"]
         FILES_TABLE["files table\nuuid, name, size, mime, category\ntelegram_msg_id, channel_id"]
         TODOS_TABLE["todos table\nuuid, title, completed\ntelegram_msg_id, completed_at"]
         NOTES_TABLE["notes table\nuuid, content\ntelegram_msg_id"]
+        OTP_TABLE["otp_sessions table\nip, code, expires_at, attempts\ntab, action, target_name, cancelled"]
         DETECT_CAT["detect_category(filename, mime)\n→ photo / video / software / file"]
         FORMAT_SIZE["format_size(bytes)\n→ 1.50 MB"]
     end
 
     %% ─── TELEGRAM CLIENT LAYER ───
     subgraph TG_CLIENT["📡 telegram_client.py — TelegramStorageClient"]
-        INIT_CLIENT["initialize()\nConnect bot, resolve 3 channels\nRegister real-time listener"]
+        INIT_CLIENT["initialize()\nConnect bot, resolve 4 channels + Owner\nRegister real-time listener"]
         SYNC_MSG["sync_channel_messages()\nBatch scan IDs 1-N in Ch1 and Ch3\nImport missing docs into SQLite"]
         FAST_UPLOAD["fast_upload_file()\n6 Workers × 512KB SaveBigFilePartRequest\n3x retry + progress callback"]
         UPLOAD_FILE["upload_file()\nRoute → Ch1 or Ch3\n>10MB → fast_upload_file\n≤10MB → standard upload"]
         FAST_DL["fast_download_stream()\n6 Workers × 512KB GetFileRequest\nasyncio.Condition ordering\nBounded Queue maxsize=12"]
         DL_STREAM["download_file_stream()\nResolve entity → get_messages\n>10MB → fast_download_stream\n≤10MB → iter_download"]
+        SEND_OTP["send_otp_to_owner()\nDispatch OTP to Ch4 / Owner DM\nAuto-delete task 180s"]
+        CANCEL_OTP["cancel_active_otp()\nPurge active OTP message from Telegram"]
+        SEND_ALERT["send_security_alert()\nOption 3: 5 failures → 10min lock alert"]
         SEND_TODO["send_todo_message()\n⏳ TODO title → Ch2"]
         UPD_TODO["update_todo_message()\nEdit msg ✅ COMPLETED or ⏳ TODO"]
         SEND_NOTE["send_note_message()\n📝 NOTE content → Ch2"]
@@ -70,11 +77,15 @@ flowchart TD
         CH1["Channel 1\nFiles / Photos / Videos"]
         CH2["Channel 2\nTasks + Notes"]
         CH3["Channel 3\nSoftware"]
+        CH4["Channel 4\nSecurity & OTP Vault\n3-Min Auto-Purge"]
         TG_DC["Telegram Data Centers\nActual binary storage — Free, Unlimited"]
     end
 
     %% ─── CONNECTIONS: Browser → FastAPI ───
-    UI_AUTH -->|"POST /api/auth/verify"| AUTH_EP
+    UI_AUTH -->|"GET /api/auth/status"| AUTH_STATUS_EP
+    UI_AUTH -->|"POST /api/auth/send-otp"| AUTH_SEND_EP
+    UI_AUTH -->|"POST /api/auth/verify-otp"| AUTH_VERIFY_EP
+    UI_AUTH -->|"POST /api/auth/cancel-otp"| AUTH_CANCEL_EP
     UI_FILES -->|"GET /api/files"| AUTH_MW
     UI_FILES -->|"POST /api/upload"| AUTH_MW
     UI_FILES -->|"GET /api/download/id"| AUTH_MW
@@ -93,6 +104,9 @@ flowchart TD
     CONFIG --> ENV --> IS_CONFIGURED
 
     %% ─── FastAPI → Database ───
+    AUTH_SEND_EP -->|"create_otp_session()"| OTP_TABLE
+    AUTH_VERIFY_EP -->|"get_active_otp_session()"| OTP_TABLE
+    AUTH_CANCEL_EP -->|"cancel_otp_sessions()"| OTP_TABLE
     UPLOAD_EP -->|"add_file()"| FILES_TABLE
     DOWNLOAD_EP -->|"get_file(uuid)"| FILES_TABLE
     DELETE_EP -->|"delete_file(uuid)"| FILES_TABLE
@@ -100,9 +114,12 @@ flowchart TD
     NOTE_EP -->|"add/get/delete note"| NOTES_TABLE
     UPLOAD_EP --> DETECT_CAT
     UPLOAD_EP --> FORMAT_SIZE
-    INIT_DB --> FILES_TABLE & TODOS_TABLE & NOTES_TABLE
+    INIT_DB --> FILES_TABLE & TODOS_TABLE & NOTES_TABLE & OTP_TABLE
 
     %% ─── FastAPI → Telegram Client ───
+    AUTH_SEND_EP -->|"send_otp_to_owner()"| SEND_OTP
+    AUTH_CANCEL_EP -->|"cancel_active_otp()"| CANCEL_OTP
+    AUTH_VERIFY_EP -->|"send_security_alert() on 5 fails"| SEND_ALERT
     UPLOAD_EP -->|"upload_file()"| UPLOAD_FILE
     DOWNLOAD_EP -->|"download_file_stream()"| DL_STREAM
     DELETE_EP -->|"delete_message()"| DEL_MSG
@@ -122,14 +139,17 @@ flowchart TD
     DL_STREAM -->|"≤ 10 MB → iter_download"| TG_DC
     FAST_DL -->|"6-worker parallel fetch"| TG_DC
 
-    %% ─── Telegram Client → Productivity ───
+    %% ─── Telegram Client → Productivity & Security ───
+    SEND_OTP --> CH4
+    CANCEL_OTP --> CH4
+    SEND_ALERT --> CH4
     SEND_TODO --> CH2
     UPD_TODO --> CH2
     SEND_NOTE --> CH2
     DEL_MSG --> CH1 & CH2 & CH3
 
     %% ─── Channels → DC ───
-    CH1 & CH2 & CH3 --> TG_DC
+    CH1 & CH2 & CH3 & CH4 --> TG_DC
 
     %% ─── Progress Tracker ───
     FAST_UPLOAD -->|"progress_callback"| PROGRESS_TRACKER
@@ -155,10 +175,10 @@ flowchart TD
     B --> C{Credentials Valid?}
     C -->|Yes| D[Start Telethon MTProto Client]
     C -->|No| E[Start in DEMO MODE\nLocal file simulation]
-    D --> F[Resolve 3 Telegram Channel Entities\nCh1=Files  Ch2=Todos  Ch3=Software]
-    F --> G[Register Real-Time Message Listener\nAuto-indexes files uploaded directly to Telegram]
-    G --> H[Initialize SQLite Database\nCreate tables if not exist]
-    H --> I[Sync existing Telegram channel messages\nImport missing files into catalog]
+    D --> F[Resolve 4 Telegram Channel Entities + Owner\nCh1=Files Ch2=Todos Ch3=Software Ch4=OTP]
+    F --> G[Register Real-Time Message Listener\nAuto-indexes files & adopts owner DM]
+    G --> H[Initialize SQLite Database\nCreate tables & auto-migrate otp_sessions]
+    H --> I[Sync existing Telegram channel messages\nImport missing files from Ch1 & Ch3 into catalog]
     I --> J([Server Ready — FastAPI Listening on :8000])
     E --> H
 ```
@@ -243,26 +263,30 @@ flowchart TD
     A([User opens site]) --> B{Has 24h session cookie?}
     B -->|Yes| C([Full Access Granted])
     B -->|No| D[Display Telegram Security Access Modal]
-    D --> E{User clicks 'Send OTP'?}
-    E --> F[POST /api/auth/send-otp]
+    D --> E{User switches Tab or closes modal?}
+    E -->|Yes| CANCEL[POST /api/auth/cancel-otp\nInvalidate in SQLite & purge from Telegram]
+    E -->|No| REQ[Click 'Request Security Code (OTP)']
+    REQ --> F[POST /api/auth/send-otp\nBody: tab, action, target_name]
     F --> G{IP locked out?}
     G -->|Yes| H([429 Error — Locked for 10 min])
     G -->|No| I{Rate limit > 4 req/min?}
     I -->|Yes| J([429 Error — Rate limit wait])
-    I -->|No| K[Generate 6-digit cryptographic code]
-    K --> L[Dispatch code to Owner's Telegram private chat\nValid for 60 seconds]
+    I -->|No| K[Generate 6-digit cryptographic code\nBind to IP, Tab & Action in SQLite]
+    K --> L[Dispatch code to Channel 4 Security Vault\nSpecifies Target Tab & Action\nSpawn 3-minute auto-delete task]
     L --> M[Start 60s countdown timer on UI]
     M --> N[User enters 6-digit code in UI]
-    N --> O[POST /api/auth/verify-otp]
+    N --> O[POST /api/auth/verify-otp\nBody: code, tab, action, target_name]
     O --> P{Code expired > 60s?}
     P -->|Yes| Q([400 Error — Expired, request new OTP])
-    P -->|No| R{Code hash matches SQLite?}
+    P -->|No| TAB_CHECK{Submitted tab == session tab?}
+    TAB_CHECK -->|No: Cross-Tab Attempt| CROSS[Reject 400 Bad Request\nCancel session & purge Telegram msg]
+    TAB_CHECK -->|Yes| R{Code hash matches SQLite?}
     R -->|Yes| S[Set 24h session cookie\nInvalidate OTP session]
     S --> C
     R -->|No| T[Increment failed attempt counter]
     T --> U{Attempts >= 5?}
     U -->|No| V([Display remaining attempts\ne.g. 3 of 5 left])
-    U -->|Yes: Option 3 Triggered| W[Dispatch Security Alert to Telegram\nLockout IP for 10 minutes]
+    U -->|Yes: Option 3 Triggered| W[Dispatch Security Alert to Channel 4\nLockout IP for 10 minutes]
     W --> X([Display 10-Minute Lockout Countdown])
 ```
 

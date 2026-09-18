@@ -14,22 +14,24 @@ graph TB
         UVICORN["Uvicorn ASGI Server\nPort = $PORT (auto-assigned by Render)"]
         FASTAPI["FastAPI Application\nmain.py\nRoutes + Auth Middleware + Progress Tracker"]
         TG_CLIENT["TelegramStorageClient\ntelegram_client.py\nMTProto Engine + 6-Worker Upload/Download"]
-        DB["SQLite3 — cloud_storage.db\naiosqlite async driver\nTables: files, todos, notes"]
+        DB["SQLite3 — cloud_storage.db\naiosqlite async driver\nTables: files, todos, notes, otp_sessions"]
         CONFIG["config.py\nEnvironment Variables Loader"]
-        DATABASE["database.py\nCRUD Functions + Category Detector"]
+        DATABASE["database.py\nCRUD Functions + OTP Session Management"]
         STATIC["static/\nindex.html — Web UI\nfavicon.svg — App Icon"]
     end
 
     subgraph TELEGRAM["📡 Telegram Infrastructure (External)"]
         CH1["Channel 1\nFiles, Photos, Videos Vault\nUp to 2 GB per file"]
         CH2["Channel 2\nTo-Do Tasks and Text Notes"]
-        CH3["Channel 3\nSoftware and Installers"]
-        BOT["@my_cloud_vault_drive_bot\nMTProto Bot Authentication"]
+        CH3["Channel 3\nSoftware and Installers\nPublic Downloads"]
+        CH4["Channel 4\nDedicated Security & OTP Vault\n3-Minute Auto-Purge"]
+        OWNER["Owner DM\nFallback for Alerts & OTP"]
+        BOT["Telegram Bot Engine\nMTProto Bot Authentication"]
         DC["Telegram Data Centers\nDC1 US / DC4 EU / DC5 Singapore\nActual file binary storage"]
     end
 
     subgraph GITHUB["🐙 GitHub (Source Control)"]
-        REPO["Private Repo\n120198subham/telegram-cloud-drive\nCI/CD trigger on git push to main"]
+        REPO["Repository\n120198subham/telegram-cloud-drive\nCI/CD trigger on git push to main"]
     end
 
     CLIENT -->|"HTTPS REST API\nJSON + Multipart"| UVICORN
@@ -44,9 +46,12 @@ graph TB
     BOT --> CH1
     BOT --> CH2
     BOT --> CH3
+    BOT --> CH4
+    BOT --> OWNER
     CH1 --> DC
     CH2 --> DC
     CH3 --> DC
+    CH4 --> DC
     GITHUB -->|"Auto-Deploy webhook\non every push"| RENDER
 ```
 
@@ -62,9 +67,12 @@ graph LR
         C["/static/* → Tailwind, Assets"]
     end
 
-    subgraph AUTH["Authentication Gate"]
-        D["auth_middleware\nChecks tg_auth cookie\nX-Auth-Token header\nor ?auth=Allow query"]
-        E["POST /api/auth/verify\nIssues 365-day cookie"]
+    subgraph AUTH["Authentication & Security Gate"]
+        D["auth_middleware\nEnforces tg_auth cookie\nor bypasses for Software"]
+        E1["GET /api/auth/status\nSession & Lockout Telemetry"]
+        E2["POST /api/auth/send-otp\nDispatches OTP to Ch4"]
+        E3["POST /api/auth/verify-otp\nValidates OTP + Tab & Sets 24h Cookie"]
+        E4["POST /api/auth/cancel-otp\nInvalidates & Purges from Telegram"]
     end
 
     subgraph FILES["File Vault Endpoints"]

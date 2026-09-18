@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: blob: https:; media-src 'self' blob: data:; font-src 'self' data: https:; connect-src 'self' https://cdn.tailwindcss.com; object-src 'none'; base-uri 'self'; form-action 'self';">
     <title>SS Workspace</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/favicon.ico">
@@ -40,8 +41,8 @@
             }
         }
     </script>
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Lucide Icons (Self-hosted to eliminate external Sub-Resource Integrity vulnerability) -->
+    <script src="/static/lucide.min.js"></script>
     <style>
         :root {
             --bg-main: #f8fafc;
@@ -595,7 +596,7 @@
                     <div class="flex items-center justify-between border-b pb-1" style="border-color: var(--border-divider);">
                         <span class="font-semibold flex items-center space-x-1.5 text-amber-500 text-[10px]">
                             <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping inline-block"></span>
-                            <span>Temp Enhancement: Live Telemetry</span>
+                            <span>Live Telemetry</span>
                         </span>
                         <span id="tempConnBadge" class="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-400 font-mono">MTProto Sync</span>
                     </div>
@@ -847,7 +848,7 @@
                 await fetch('/api/auth/cancel-otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tab: targetTab })
+                    body: JSON.stringify({ tab: targetTab, session_id: window.currentOtpSessionId || null })
                 });
             } catch (e) {
                 console.debug("Cancel OTP error:", e);
@@ -980,6 +981,10 @@
                 document.getElementById('otpInputState').classList.remove('hidden');
                 startOtpCountdown(data.expires_in || 60);
 
+                if (data.session_id) {
+                    window.currentOtpSessionId = data.session_id;
+                }
+
                 const badge = document.getElementById('otpAttemptsBadge');
                 if (badge) badge.textContent = '5 attempts left';
 
@@ -987,10 +992,6 @@
                 if (input) {
                     input.value = '';
                     setTimeout(() => input.focus(), 150);
-                }
-
-                if (data.demo_code) {
-                    showLockError(`Demo Code: ${data.demo_code}`, false, true);
                 }
                 refreshIcons();
             } catch (err) {
@@ -1031,7 +1032,8 @@
                         code: code,
                         tab: currentTargetTab,
                         action: currentAction,
-                        target_name: currentTargetName
+                        target_name: currentTargetName,
+                        session_id: window.currentOtpSessionId || null
                     })
                 });
                 const data = await res.json();
@@ -1047,7 +1049,9 @@
                 }
 
                 // Authentication Success!
-                document.cookie = "tg_auth=Allow; path=/; max-age=86400; SameSite=Lax";
+                if (data.session_token) {
+                    localStorage.setItem('session_token', data.session_token);
+                }
                 clearInterval(otpCountdownInterval);
                 showLockModal(false);
                 isUnlocked = true;
@@ -1107,9 +1111,25 @@
             }
             const input = document.getElementById('fallbackPasswordInput');
             const password = (input && input.value ? input.value : '').trim();
+            if (!password) {
+                showLockError('Please enter password.', true);
+                return false;
+            }
 
-            if (password.toLowerCase() === 'allow') {
-                document.cookie = "tg_auth=Allow; path=/; max-age=86400; SameSite=Lax";
+            try {
+                const res = await fetch('/api/auth/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: password })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Incorrect password.');
+                }
+
+                if (data.session_token) {
+                    localStorage.setItem('session_token', data.session_token);
+                }
                 showLockModal(false);
                 isUnlocked = true;
                 updateLockStateUI(true);
@@ -1127,8 +1147,10 @@
                 pendingContext = null;
                 activateTab(targetTab);
                 return false;
+            } catch (err) {
+                showLockError(err.message || 'Incorrect password.', true);
             }
-            showLockError('Incorrect password.', true);
+            return false;
         }
 
         function showLockError(msg, isError = true, isNotice = false) {
@@ -1185,6 +1207,7 @@
             pendingAction = null;
             pendingContext = null;
             localStorage.removeItem('tg_auth');
+            localStorage.removeItem('session_token');
             updateLockStateUI(false);
             initApp('softwares');
             return false;
@@ -1208,6 +1231,7 @@
             pendingAction = null;
             pendingContext = null;
             localStorage.removeItem('tg_auth');
+            localStorage.removeItem('session_token');
             document.cookie = "tg_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
             updateLockStateUI(false);
             activateTab('softwares');
@@ -1383,16 +1407,16 @@
             }
 
             // 4. Start XHR download with real-time progress callbacks
-            const authParam = isSoftware ? '' : '?auth=Allow';
-            const downloadUrl = `/api/download/${fileId}${authParam}`;
+            const downloadUrl = `/api/download/${fileId}`;
 
             const xhr = new XMLHttpRequest();
             activeDownloads[fileId] = { xhr, filename, totalBytes };
 
             xhr.open('GET', downloadUrl, true);
             xhr.responseType = 'blob';
-            if (!isSoftware) {
-                xhr.setRequestHeader('X-Auth-Token', 'Allow');
+            const sessionToken = localStorage.getItem('session_token');
+            if (sessionToken && !isSoftware) {
+                xhr.setRequestHeader('X-Session-Token', sessionToken);
             }
 
             xhr.onprogress = (e) => {
@@ -1558,11 +1582,14 @@
 
         // ==================== FILES, SOFTWARES, PHOTOS, VIDEOS ====================
 
+        let currentLoadedFiles = {};
+
         async function fetchCategoryFiles(category, prefetch = false) {
             try {
                 const headers = {};
-                if (isUnlocked) {
-                    headers['X-Auth-Token'] = 'Allow';
+                const sessionToken = localStorage.getItem('session_token');
+                if (sessionToken) {
+                    headers['X-Session-Token'] = sessionToken;
                 }
                 const prefetchParam = prefetch ? '&prefetch=true' : '';
                 const res = await fetch(`/api/files?category=${category}${prefetchParam}`, { headers });
@@ -1574,6 +1601,7 @@
                     }
                 }
                 const data = await res.json();
+                currentLoadedFiles[category] = data.files || [];
 
                 if (category === 'software') renderSoftwareList(data.files);
                 else if (category === 'file') renderFilesList(data.files);
@@ -1692,6 +1720,13 @@
             refreshIcons();
         }
 
+        function openPhotoLightbox(photoId) {
+            const photo = ((currentLoadedFiles && currentLoadedFiles['photo']) || []).find(p => p.id === photoId);
+            if (photo) {
+                openLightbox(`/api/download/${photo.id}`, photo.filename, photo.id, photo.size || 0);
+            }
+        }
+
         function renderPhotosGrid(photos) {
             const grid = document.getElementById('photosGrid');
             if (!photos || photos.length === 0) {
@@ -1700,7 +1735,7 @@
             }
             grid.innerHTML = photos.map(p => `
                 <div id="fileIcon-${p.id}" class="group relative rounded-xl overflow-hidden glass border aspect-square flex items-center justify-center min-w-0 shadow-sm" style="border-color: var(--subtle-border); background-color: var(--subtle-bg);">
-                    <img src="/api/download/${p.id}?auth=Allow" loading="lazy" class="w-full h-full object-cover cursor-pointer group-hover:scale-105 transition duration-200" onclick="openLightbox('/api/download/${p.id}?auth=Allow', '${escapeHtml(p.filename)}', '${p.id}', ${p.size || 0})">
+                    <img src="/api/download/${p.id}" loading="lazy" class="w-full h-full object-cover cursor-pointer group-hover:scale-105 transition duration-200" onclick="openPhotoLightbox('${p.id}')">
                     <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 sm:p-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition min-w-0 z-10">
                         <span class="text-[10px] text-white font-medium truncate max-w-[65px] sm:max-w-[90px]">${escapeHtml(p.filename)}</span>
                         <div class="flex space-x-1 shrink-0">
@@ -1723,7 +1758,7 @@
                 <div class="glass rounded-xl overflow-hidden p-2.5 sm:p-3 space-y-2 border min-w-0 w-full shadow-sm" style="border-color: var(--subtle-border);">
                     <div id="fileIcon-${v.id}" class="relative rounded-lg overflow-hidden bg-black aspect-video flex items-center justify-center min-w-0 w-full">
                         <video controls playsinline preload="metadata" class="w-full h-full max-w-full">
-                            <source src="/api/download/${v.id}?auth=Allow" type="${v.mime_type || 'video/mp4'}">
+                            <source src="/api/download/${v.id}" type="${escapeHtml(v.mime_type || 'video/mp4')}">
                         </video>
                     </div>
                     <div class="flex items-center justify-between text-xs pt-1 min-w-0">
@@ -1871,6 +1906,12 @@
 
                             // Start polling Stage 2 progress from server
                             if (!pollInterval) {
+                                // Rolling speed window for smooth ETA (last 5 samples)
+                                let speedSamples = [];
+                                let lastPollBytes = 0;
+                                let lastPollTime = Date.now();
+                                let displayedPercent = 0; // anti-flicker: never go backwards
+
                                 pollInterval = setInterval(async () => {
                                     try {
                                         const res = await fetch(`/api/upload-progress/${uploadId}`);
@@ -1879,21 +1920,56 @@
                                             stage2Details.textContent = 'Preparing Telegram upload stream...';
                                         }
                                         if (p.status === 'uploading_to_telegram' || p.status === 'completed') {
-                                            stage2Bar.style.width = `${p.percent}%`;
-                                            stage2Percent.textContent = `${p.percent}%`;
-                                            stage2Speed.textContent = `${p.speed_mbs} MB/s`;
+                                            // Anti-flicker: % display never regresses
+                                            const newPercent = parseFloat(p.percent) || 0;
+                                            if (newPercent > displayedPercent) {
+                                                displayedPercent = newPercent;
+                                            }
+                                            stage2Bar.style.width = `${displayedPercent}%`;
+                                            stage2Percent.textContent = `${displayedPercent.toFixed(1)}%`;
+
+                                            // Rolling average speed over last 5 polls
+                                            const nowMs = Date.now();
+                                            const dtSec = (nowMs - lastPollTime) / 1000;
+                                            if (dtSec > 0.1 && p.current > lastPollBytes) {
+                                                const bytesPerSec = (p.current - lastPollBytes) / dtSec;
+                                                speedSamples.push(bytesPerSec);
+                                                if (speedSamples.length > 5) speedSamples.shift();
+                                            }
+                                            lastPollBytes = p.current || lastPollBytes;
+                                            lastPollTime = nowMs;
+
+                                            const avgSpeed = speedSamples.length > 0
+                                                ? speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length
+                                                : (p.speed_mbs || 0) * 1024 * 1024;
+
+                                            const displaySpeedMbs = (avgSpeed / (1024 * 1024)).toFixed(1);
+                                            stage2Speed.textContent = `${displaySpeedMbs} MB/s`;
+
                                             const curMB = (p.current / (1024 * 1024)).toFixed(1);
                                             const totMB = (p.total / (1024 * 1024)).toFixed(1);
                                             stage2Details.textContent = `${curMB} MB / ${totMB} MB`;
-                                            if (p.eta_seconds > 0) {
-                                                const mins = Math.floor(p.eta_seconds / 60);
-                                                const secs = p.eta_seconds % 60;
-                                                stage2Eta.textContent = mins > 0 ? `ETA: ${mins}m ${secs}s` : `ETA: ${secs}s`;
-                                            } else {
-                                                stage2Eta.textContent = '';
-                                            }
 
-                                            // [TEMP ENHANCEMENT]: Populate real-time live telemetry
+                                            // ETA: client-side rolling average (never blank once shown)
+                                            const remaining = (p.total - p.current);
+                                            let etaSec = avgSpeed > 0 ? Math.round(remaining / avgSpeed) : p.eta_seconds;
+                                            if (etaSec > 0) {
+                                                const hrs = Math.floor(etaSec / 3600);
+                                                const mins = Math.floor((etaSec % 3600) / 60);
+                                                const secs = etaSec % 60;
+                                                if (hrs > 0) {
+                                                    stage2Eta.textContent = `ETA: ${hrs}h ${mins}m`;
+                                                } else if (mins > 0) {
+                                                    stage2Eta.textContent = `ETA: ${mins}m ${secs}s`;
+                                                } else {
+                                                    stage2Eta.textContent = `ETA: ${secs}s`;
+                                                }
+                                            } else if (!stage2Eta.textContent) {
+                                                stage2Eta.textContent = 'ETA: Calculating...';
+                                            }
+                                            // (never blank out stage2Eta once set — anti-flicker)
+
+                                            // Live Telemetry panel updates
                                             if (tempElapsed) {
                                                 const elapsedSec = Math.floor((Date.now() - uploadStartTime) / 1000);
                                                 const eMin = Math.floor(elapsedSec / 60);
@@ -1910,14 +1986,15 @@
                                                     tempDataInfo.textContent = `${cMB} MB / ${tMB} MB`;
                                                 }
                                                 if (tempThroughput) {
-                                                    const kbps = (p.speed_mbs * 1024).toFixed(0);
-                                                    tempThroughput.textContent = `${kbps} KB/s (${p.speed_mbps || (p.speed_mbs * 8).toFixed(2)} Mbps)`;
+                                                    const kbps = (avgSpeed / 1024).toFixed(0);
+                                                    const mbps = (avgSpeed * 8 / (1024 * 1024)).toFixed(2);
+                                                    tempThroughput.textContent = `${kbps} KB/s (${mbps} Mbps)`;
                                                 }
                                                 if (tempRemaining) {
-                                                    if (p.eta_seconds > 0) {
-                                                        const hrs = Math.floor(p.eta_seconds / 3600);
-                                                        const mins = Math.floor((p.eta_seconds % 3600) / 60);
-                                                        const secs = p.eta_seconds % 60;
+                                                    if (etaSec > 0) {
+                                                        const hrs = Math.floor(etaSec / 3600);
+                                                        const mins = Math.floor((etaSec % 3600) / 60);
+                                                        const secs = etaSec % 60;
                                                         if (hrs > 0) {
                                                             tempRemaining.textContent = `Est. Remaining: ~${hrs}h ${mins}m`;
                                                         } else if (mins > 0) {
@@ -1938,12 +2015,13 @@
                                             stage2Details.className = 'font-medium text-emerald-500 text-[10px]';
                                             stage2Bar.className = "bg-emerald-500 h-1.5 rounded-full";
                                             stage2Dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block';
+                                            stage2Eta.textContent = 'Done ✓';
                                             stopPolling();
                                         }
                                     } catch (err) {
                                         console.warn('Progress poll error:', err);
                                     }
-                                }, 350);
+                                }, 500);
                             }
                         }
                     }
@@ -1983,8 +2061,9 @@
                 };
 
                 xhr.open('POST', `/api/upload?category=${category}`, true);
-                if (isUnlocked) {
-                    xhr.setRequestHeader('X-Auth-Token', 'Allow');
+                const sessionToken = localStorage.getItem('session_token');
+                if (sessionToken) {
+                    xhr.setRequestHeader('X-Session-Token', sessionToken);
                 }
                 xhr.send(formData);
             });
@@ -2004,9 +2083,12 @@
         async function executeDeleteFile(id, filename, category) {
             if (!confirm(`Delete "${filename || 'this item'}" from Telegram storage?`)) return;
             try {
+                const headers = {};
+                const sessionToken = localStorage.getItem('session_token');
+                if (sessionToken) headers['X-Session-Token'] = sessionToken;
                 const res = await fetch(`/api/files/${id}`, {
                     method: 'DELETE',
-                    headers: { 'X-Auth-Token': 'Allow' }
+                    headers: headers
                 });
                 if (res.status === 401) {
                     lockApp();
@@ -2019,11 +2101,21 @@
             }
         }
 
+        // ==================== AUTH HEADER HELPER ====================
+        function getAuthHeaders(extraHeaders = {}) {
+            const headers = { ...extraHeaders };
+            const sessionToken = localStorage.getItem('session_token');
+            if (sessionToken) {
+                headers['X-Session-Token'] = sessionToken;
+            }
+            return headers;
+        }
+
         // ==================== SEND TEXT / NOTES ====================
 
         async function fetchNotes() {
             try {
-                const res = await fetch('/api/notes', { headers: { 'X-Auth-Token': 'Allow' } });
+                const res = await fetch('/api/notes', { headers: getAuthHeaders() });
                 if (res.status === 401) { lockApp(); return; }
                 const data = await res.json();
                 const container = document.getElementById('notesContainer');
@@ -2056,7 +2148,7 @@
             if (!content) return;
             await fetch('/api/notes', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': 'Allow' },
+                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ content })
             });
             input.value = '';
@@ -2066,7 +2158,7 @@
         async function deleteNote(id) {
             await fetch(`/api/notes/${id}`, {
                 method: 'DELETE',
-                headers: { 'X-Auth-Token': 'Allow' }
+                headers: getAuthHeaders()
             });
             fetchNotes();
         }
@@ -2076,7 +2168,7 @@
         async function fetchTodos() {
             try {
                 const res = await fetch(`/api/todos?status=${currentTodoFilter}`, {
-                    headers: { 'X-Auth-Token': 'Allow' }
+                    headers: getAuthHeaders()
                 });
                 if (res.status === 401) { lockApp(); return; }
                 const data = await res.json();
@@ -2122,7 +2214,7 @@
             if (!title) return;
             await fetch('/api/todos', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': 'Allow' },
+                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ title })
             });
             input.value = '';
@@ -2132,7 +2224,7 @@
         async function toggleTodo(id, completed) {
             await fetch(`/api/todos/${id}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': 'Allow' },
+                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ completed })
             });
             fetchTodos();
@@ -2141,7 +2233,7 @@
         async function deleteTodo(id) {
             await fetch(`/api/todos/${id}`, {
                 method: 'DELETE',
-                headers: { 'X-Auth-Token': 'Allow' }
+                headers: getAuthHeaders()
             });
             fetchTodos();
         }
@@ -2150,7 +2242,7 @@
             if (!confirm("Clear all completed tasks? They will be removed from your list and Telegram.")) return;
             await fetch('/api/todos/clear-completed', {
                 method: 'POST',
-                headers: { 'X-Auth-Token': 'Allow' }
+                headers: getAuthHeaders()
             });
             fetchTodos();
         }
@@ -2180,7 +2272,7 @@
             try {
                 const res = await fetch('/api/sync', {
                     method: 'POST',
-                    headers: { 'X-Auth-Token': 'Allow' }
+                    headers: getAuthHeaders()
                 });
                 const data = await res.json();
                 alert(`Sync Complete! Found and imported ${data.imported_files} file(s) from your Telegram channel.`);
@@ -2237,8 +2329,17 @@
         }
 
         function escapeHtml(text) {
-            const map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
-            return (text || '').replace(/[&<>"']/g, m => map[m]);
+            if (!text) return '';
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+                '`': '&#96;',
+                '/': '&#x2F;'
+            };
+            return String(text).replace(/[&<>"'`\/]/g, m => map[m]);
         }
 
         // Start Auth Check
