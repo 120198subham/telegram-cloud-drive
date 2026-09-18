@@ -15,6 +15,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, statu
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Scope, Receive, Send
 from pydantic import BaseModel
 
 from config import (
@@ -153,32 +154,55 @@ app.add_middleware(
     expose_headers=["Content-Length", "Content-Disposition", "Content-Type", "Accept-Ranges"],
 )
 
-# Security Headers Middleware: Enforces HSTS, Content-Security-Policy (CSP) & Defense-in-Depth Headers
-@app.middleware("http")
-async def security_headers_middleware(request: Request, call_next):
-    response = await call_next(request)
-    # Content-Security-Policy declaration for scripts, styles, images, media, and fonts
-    csp_directives = [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob: https:",
-        "media-src 'self' blob: data:",
-        "font-src 'self' data: https:",
-        "connect-src 'self'",
-        "frame-ancestors 'none'",
-        "object-src 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-    ]
-    response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
-    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
+CSP_DIRECTIVES = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: data:",
+    "font-src 'self' data: https:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+]
+CSP_HEADER_VALUE = "; ".join(CSP_DIRECTIVES)
+
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "X-XSS-Protection": "1; mode=block",
+    "Content-Security-Policy": CSP_HEADER_VALUE,
+}
+
+def apply_security_headers(response: Response) -> Response:
+    """Enforces defense-in-depth headers on any response object."""
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
     return response
+
+@app.middleware("http")
+async def security_headers_http_middleware(request: Request, call_next):
+    response = await call_next(request)
+    return apply_security_headers(response)
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    return apply_security_headers(JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    ))
+
+@app.exception_handler(404)
+async def custom_404_handler(request: Request, exc: Exception):
+    return apply_security_headers(JSONResponse(
+        status_code=404,
+        content={"detail": "Not Found"}
+    ))
 
 # Authentication Middleware: Enforces HMAC-signed session tokens and strict channel access control
 @app.middleware("http")
@@ -228,10 +252,10 @@ async def auth_middleware(request: Request, call_next):
     if token and verify_signed_session_token(token):
         return await call_next(request)
 
-    return JSONResponse(
+    return apply_security_headers(JSONResponse(
         status_code=401,
         content={"detail": "Authentication required. Please verify via Telegram OTP."}
-    )
+    ))
 
 # Pydantic request models
 class AuthRequest(BaseModel):

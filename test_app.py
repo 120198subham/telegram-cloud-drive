@@ -478,6 +478,20 @@ async def test_security_headers_and_csp():
         assert "Strict-Transport-Security" in api_resp.headers
         assert api_resp.headers.get("X-Frame-Options") == "DENY"
 
+        # Verify HSTS and CSP are attached to 401 unauthenticated error responses (Aikido fix)
+        unauth_resp = await client.get("/api/download/nonexistent-file-id")
+        assert unauth_resp.status_code == 401
+        assert "Strict-Transport-Security" in unauth_resp.headers
+        assert "Content-Security-Policy" in unauth_resp.headers
+        assert unauth_resp.headers.get("X-Frame-Options") == "DENY"
+
+        # Verify HSTS and CSP are attached to 404 not found responses
+        notfound_resp = await client.get("/nonexistent-endpoint-404")
+        assert notfound_resp.status_code == 404
+        assert "Strict-Transport-Security" in notfound_resp.headers
+        assert "Content-Security-Policy" in notfound_resp.headers
+        assert notfound_resp.headers.get("X-Frame-Options") == "DENY"
+
 
 @pytest.mark.asyncio
 async def test_demo_mode_does_not_disclose_otp():
