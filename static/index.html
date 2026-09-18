@@ -1,0 +1,1848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>SS Workspace</title>
+    <!-- Auto Theme Detection (Runs immediately to prevent theme flashing) -->
+    <script>
+        function applySystemTheme() {
+            const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+                document.documentElement.classList.remove('light');
+            } else {
+                document.documentElement.classList.remove('dark');
+                document.documentElement.classList.add('light');
+            }
+        }
+        applySystemTheme();
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySystemTheme);
+        }
+    </script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            500: '#2AABEE',
+                            600: '#229ED9',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-main: #f8fafc;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
+            --card-bg: rgba(255, 255, 255, 0.90);
+            --card-border: rgba(226, 232, 240, 0.9);
+            --card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+            --header-bg: rgba(255, 255, 255, 0.88);
+            --input-bg: #ffffff;
+            --input-border: #cbd5e1;
+            --subtle-bg: rgba(241, 245, 249, 0.9);
+            --subtle-border: rgba(226, 232, 240, 0.9);
+            --item-hover: rgba(241, 245, 249, 0.85);
+            --border-divider: rgba(226, 232, 240, 0.8);
+            --modal-overlay: rgba(15, 23, 42, 0.55);
+            --lightbox-overlay: rgba(0, 0, 0, 0.92);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not(.light) {
+                --bg-main: #020617;
+                --text-primary: #f8fafc;
+                --text-secondary: #94a3b8;
+                --card-bg: rgba(15, 23, 42, 0.85);
+                --card-border: rgba(255, 255, 255, 0.08);
+                --card-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.3);
+                --header-bg: rgba(15, 23, 42, 0.85);
+                --input-bg: #0f172a;
+                --input-border: rgba(51, 65, 85, 0.8);
+                --subtle-bg: rgba(30, 41, 59, 0.7);
+                --subtle-border: rgba(51, 65, 85, 0.6);
+                --item-hover: rgba(30, 41, 59, 0.5);
+                --border-divider: rgba(51, 65, 85, 0.5);
+                --modal-overlay: rgba(2, 6, 23, 0.95);
+                --lightbox-overlay: rgba(0, 0, 0, 0.95);
+            }
+        }
+
+        html.dark {
+            --bg-main: #020617;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --card-bg: rgba(15, 23, 42, 0.85);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --card-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.3);
+            --header-bg: rgba(15, 23, 42, 0.85);
+            --input-bg: #0f172a;
+            --input-border: rgba(51, 65, 85, 0.8);
+            --subtle-bg: rgba(30, 41, 59, 0.7);
+            --subtle-border: rgba(51, 65, 85, 0.6);
+            --item-hover: rgba(30, 41, 59, 0.5);
+            --border-divider: rgba(51, 65, 85, 0.5);
+            --modal-overlay: rgba(2, 6, 23, 0.95);
+            --lightbox-overlay: rgba(0, 0, 0, 0.95);
+        }
+
+        html.light {
+            --bg-main: #f8fafc;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
+            --card-bg: rgba(255, 255, 255, 0.90);
+            --card-border: rgba(226, 232, 240, 0.9);
+            --card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+            --header-bg: rgba(255, 255, 255, 0.88);
+            --input-bg: #ffffff;
+            --input-border: #cbd5e1;
+            --subtle-bg: rgba(241, 245, 249, 0.9);
+            --subtle-border: rgba(226, 232, 240, 0.9);
+            --item-hover: rgba(241, 245, 249, 0.85);
+            --border-divider: rgba(226, 232, 240, 0.8);
+            --modal-overlay: rgba(15, 23, 42, 0.55);
+            --lightbox-overlay: rgba(0, 0, 0, 0.92);
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            max-width: 100%;
+        }
+        html {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden !important;
+            -webkit-text-size-adjust: 100%;
+        }
+        body {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden !important;
+            position: relative;
+            touch-action: pan-y pinch-zoom;
+            -webkit-overflow-scrolling: touch;
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        #mainApp, main, header, nav {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+        p, span, h1, h2, h3, h4, h5, h6, div, label {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .glass {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--card-border);
+            box-shadow: var(--card-shadow);
+        }
+        .drag-active {
+            border-color: #2AABEE !important;
+            background-color: rgba(42, 171, 238, 0.1) !important;
+        }
+        input[type="text"], input[type="password"], textarea {
+            background-color: var(--input-bg) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--input-border) !important;
+        }
+        input::placeholder, textarea::placeholder {
+            color: var(--text-secondary) !important;
+        }
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Shake animation for incorrect password */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-6px); }
+            40%, 80% { transform: translateX(6px); }
+        }
+        .animate-shake {
+            animation: shake 0.4s ease-in-out;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-main);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--input-border);
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-24 sm:pb-8 w-full max-w-full overflow-x-hidden">
+
+    <!-- ==================== SECURITY ACCESS MODAL ==================== -->
+    <div id="lockScreenOverlay" class="hidden fixed inset-0 z-50 backdrop-blur-xl flex items-center justify-center p-4 transition-colors" style="background-color: var(--modal-overlay);">
+        <div id="lockCard" class="glass relative max-w-sm w-full rounded-2xl p-6 sm:p-8 text-center space-y-5 shadow-2xl">
+            <!-- Close Modal Button -->
+            <button type="button" onclick="closeLockModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:opacity-80 transition" style="color: var(--text-secondary);" title="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+
+            <div class="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-500 flex items-center justify-center mx-auto shadow-inner">
+                <i data-lucide="lock" class="w-7 h-7"></i>
+            </div>
+            <div>
+                <h2 class="text-lg sm:text-xl font-bold tracking-tight" style="color: var(--text-primary);">Security Access</h2>
+                <p class="text-xs mt-1" style="color: var(--text-secondary);">Enter password to unlock your private vault</p>
+            </div>
+            
+            <form onsubmit="handleUnlock(event); return false;" class="space-y-3">
+                <div class="relative">
+                    <i data-lucide="key-round" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2" style="color: var(--text-secondary);"></i>
+                    <input type="password" id="passwordInput" placeholder="Enter password..." class="w-full pl-10 pr-4 py-3 border rounded-xl text-base sm:text-sm focus:outline-none focus:border-sky-500 transition">
+                </div>
+                <p id="lockErrorMsg" class="hidden text-xs text-red-500 font-medium"></p>
+                <button type="submit" class="w-full py-3 bg-sky-500 hover:bg-sky-600 active:scale-95 text-white font-semibold text-sm rounded-xl transition shadow-lg shadow-sky-500/20 flex items-center justify-center space-x-1.5 cursor-pointer">
+                    <span>Unlock Workspace</span>
+                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+            </form>
+
+            <div class="pt-2 border-t" style="border-color: var(--border-divider);">
+                <button type="button" onclick="goToPublicSoftwares()" class="w-full py-2.5 rounded-xl border text-xs font-medium transition flex items-center justify-center space-x-1.5 hover:opacity-80" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
+                    <i data-lucide="box" class="w-4 h-4 text-purple-500"></i>
+                    <span>Browse Softwares (No Password Required)</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MAIN WORKSPACE ==================== -->
+    <div id="mainApp" class="flex-1 flex flex-col w-full max-w-full overflow-x-hidden">
+
+        <!-- Top Header Navigation -->
+        <header class="border-b sticky top-0 z-30 w-full overflow-hidden backdrop-blur-md transition-colors duration-200" style="background-color: var(--header-bg); border-color: var(--card-border);">
+            <div class="max-w-6xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between min-w-0">
+                <div class="flex items-center space-x-2 sm:space-x-3 min-w-0 shrink">
+                    <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-blue-600 flex items-center justify-center shadow-lg shadow-sky-500/20 shrink-0">
+                        <i data-lucide="layers" class="w-4 h-4 sm:w-6 sm:h-6 text-white"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <span class="font-bold text-sm sm:text-lg tracking-tight truncate block" style="color: var(--text-primary);">SS Workspace</span>
+                        <p class="hidden sm:block text-xs truncate" style="color: var(--text-secondary);">Softwares, Files, Photos, Videos & Tasks</p>
+                    </div>
+                </div>
+
+                <!-- Header Actions (Sync, Lock/Unlock, Settings) -->
+                <div class="flex items-center space-x-1.5 sm:space-x-2.5 shrink-0">
+                    <!-- Sync Button -->
+                    <button onclick="syncTelegram()" id="syncBtn" class="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 active:scale-95 text-sky-500 border border-sky-500/30 text-[11px] sm:text-xs font-medium transition shrink-0" title="Scan & import files from Telegram">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5" id="syncIcon"></i>
+                        <span class="hidden md:inline">Sync</span>
+                    </button>
+                    <!-- Lock / Unlock Button -->
+                    <button onclick="toggleLockOrModal()" id="headerLockBtn" class="p-1.5 sm:p-2 rounded-lg hover:opacity-80 active:scale-95 transition shrink-0 border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);" title="Unlock Private Vault">
+                        <i data-lucide="lock" class="w-3.5 h-3.5 sm:w-5 sm:h-5 text-amber-500"></i>
+                    </button>
+                    <!-- Settings -->
+                    <button onclick="toggleConfigModal(true)" class="p-1.5 sm:p-2 rounded-lg hover:opacity-80 active:scale-95 transition shrink-0 border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);" title="Dual Channel Settings">
+                        <i data-lucide="settings" class="w-3.5 h-3.5 sm:w-5 sm:h-5"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 flex-1 w-full max-w-full space-y-4 sm:space-y-6 overflow-hidden">
+
+            <!-- Desktop Navigation Tabs (Hidden on Mobile, Bottom Bar takes over) -->
+            <div class="hidden sm:flex glass p-1.5 rounded-2xl items-center space-x-1">
+                <!-- Softwares Tab (Public) -->
+                <button onclick="switchTab('softwares')" id="tabBtn-softwares-desktop" class="tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition">
+                    <i data-lucide="box" class="w-4 h-4"></i>
+                    <span>Softwares</span>
+                </button>
+                <!-- Files Tab (Protected) -->
+                <button onclick="switchTab('files')" id="tabBtn-files-desktop" class="tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition">
+                    <i data-lucide="folder" class="w-4 h-4"></i>
+                    <span>Files</span>
+                    <i data-lucide="lock" class="w-3 h-3 text-amber-500 tab-lock-icon"></i>
+                </button>
+                <!-- Photos Tab (Protected) -->
+                <button onclick="switchTab('photos')" id="tabBtn-photos-desktop" class="tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition">
+                    <i data-lucide="image" class="w-4 h-4"></i>
+                    <span>Photos</span>
+                    <i data-lucide="lock" class="w-3 h-3 text-amber-500 tab-lock-icon"></i>
+                </button>
+                <!-- Videos Tab (Protected) -->
+                <button onclick="switchTab('videos')" id="tabBtn-videos-desktop" class="tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition">
+                    <i data-lucide="video" class="w-4 h-4"></i>
+                    <span>Videos</span>
+                    <i data-lucide="lock" class="w-3 h-3 text-amber-500 tab-lock-icon"></i>
+                </button>
+                <!-- Send Text Tab (Protected) -->
+                <button onclick="switchTab('notes')" id="tabBtn-notes-desktop" class="tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    <span>Send Text</span>
+                    <i data-lucide="lock" class="w-3 h-3 text-amber-500 tab-lock-icon"></i>
+                </button>
+                <!-- To-Do List Tab (Protected) -->
+                <button onclick="switchTab('todos')" id="tabBtn-todos-desktop" class="tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition">
+                    <i data-lucide="check-square" class="w-4 h-4"></i>
+                    <span>To-Do List</span>
+                    <i data-lucide="lock" class="w-3 h-3 text-amber-500 tab-lock-icon"></i>
+                    <span id="todoActiveBadge-desktop" class="hidden text-[10px] bg-sky-500/20 text-sky-500 font-mono px-1.5 py-0.2 rounded-full ml-1">0</span>
+                </button>
+            </div>
+
+            <!-- ==================== TAB: SOFTWARES (PUBLIC - NO PASSWORD NEEDED) ==================== -->
+            <div id="tabContent-softwares" class="tab-content space-y-4">
+                <!-- Softwares Upload Zone -->
+                <div class="glass p-5 rounded-2xl border-dashed border-2 hover:border-purple-500/50 active:scale-[0.99] transition cursor-pointer text-center" style="border-color: var(--subtle-border);" onclick="triggerUpload('software')">
+                    <input type="file" id="fileInput-software" class="hidden" multiple onchange="handleFileSelect(event, 'software')">
+                    <div class="flex flex-col items-center py-2 space-y-2">
+                        <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                            <i data-lucide="box" class="w-6 h-6"></i>
+                        </div>
+                        <h3 class="text-sm sm:text-base font-semibold" style="color: var(--text-primary);">Tap to Upload Software & Tools</h3>
+                        <p class="text-xs" style="color: var(--text-secondary);">EXEs, APKs, ZIPs, DMGs, ISOs (Public access • No password needed to download)</p>
+                    </div>
+                </div>
+
+                <!-- Softwares List -->
+                <div class="glass rounded-2xl overflow-hidden">
+                    <div class="p-3.5 sm:p-4 border-b flex items-center justify-between" style="border-color: var(--border-divider);">
+                        <div class="flex items-center space-x-2 min-w-0">
+                            <i data-lucide="box" class="w-4 h-4 text-purple-500 shrink-0"></i>
+                            <h3 class="font-semibold text-sm sm:text-base truncate" style="color: var(--text-primary);">Softwares & Applications</h3>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 font-medium shrink-0">Public</span>
+                        </div>
+                        <button onclick="fetchCategoryFiles('software')" class="p-1.5 rounded-lg border hover:opacity-80 transition shrink-0" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);" title="Refresh software list">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div id="filesContainer-software"></div>
+                </div>
+            </div>
+
+            <!-- ==================== TAB 1: FILES ==================== -->
+            <div id="tabContent-files" class="tab-content space-y-4">
+                <!-- Upload Zone -->
+                <div class="glass p-5 rounded-2xl border-dashed border-2 hover:border-sky-500/50 active:scale-[0.99] transition cursor-pointer text-center" style="border-color: var(--subtle-border);" onclick="triggerUpload('file')">
+                    <input type="file" id="fileInput-file" class="hidden" multiple onchange="handleFileSelect(event, 'file')">
+                    <div class="flex flex-col items-center py-2 space-y-2">
+                        <div class="w-12 h-12 rounded-xl bg-sky-500/10 text-sky-500 flex items-center justify-center">
+                            <i data-lucide="file-up" class="w-6 h-6"></i>
+                        </div>
+                        <h3 class="text-sm sm:text-base font-semibold" style="color: var(--text-primary);">Tap to Upload Documents & Files</h3>
+                        <p class="text-xs" style="color: var(--text-secondary);">PDFs, ZIPs, docs up to <strong>2 GB</strong></p>
+                    </div>
+                </div>
+
+                <!-- Files List -->
+                <div class="glass rounded-2xl overflow-hidden">
+                    <div class="p-3.5 sm:p-4 border-b flex items-center justify-between" style="border-color: var(--border-divider);">
+                        <h3 class="font-semibold text-sm sm:text-base flex items-center" style="color: var(--text-primary);">
+                            <i data-lucide="folder" class="w-4 h-4 mr-2 text-sky-500"></i> Stored Documents
+                        </h3>
+                        <button onclick="fetchCategoryFiles('file')" class="p-1.5 rounded-lg border hover:opacity-80 transition" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div id="filesContainer-file"></div>
+                </div>
+            </div>
+
+            <!-- ==================== TAB 2: PHOTOS ==================== -->
+            <div id="tabContent-photos" class="tab-content hidden space-y-4">
+                <div class="glass p-5 rounded-2xl border-dashed border-2 hover:border-emerald-500/50 active:scale-[0.99] transition cursor-pointer text-center" style="border-color: var(--subtle-border);" onclick="triggerUpload('photo')">
+                    <input type="file" id="fileInput-photo" class="hidden" accept="image/*" multiple onchange="handleFileSelect(event, 'photo')">
+                    <div class="flex flex-col items-center py-2 space-y-2">
+                        <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                            <i data-lucide="image-plus" class="w-6 h-6"></i>
+                        </div>
+                        <h3 class="text-sm sm:text-base font-semibold" style="color: var(--text-primary);">Tap to Upload Photos</h3>
+                        <p class="text-xs" style="color: var(--text-secondary);">Uncompressed camera & gallery photos</p>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-3.5 sm:p-5">
+                    <div class="flex items-center justify-between mb-3 pb-2 border-b" style="border-color: var(--border-divider);">
+                        <h3 class="font-semibold text-sm sm:text-base flex items-center" style="color: var(--text-primary);">
+                            <i data-lucide="image" class="w-4 h-4 mr-2 text-emerald-500"></i> Photo Gallery
+                        </h3>
+                        <button onclick="fetchCategoryFiles('photo')" class="p-1.5 rounded-lg border hover:opacity-80 transition" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div id="photosGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 sm:gap-3"></div>
+                </div>
+            </div>
+
+            <!-- ==================== TAB 3: VIDEOS ==================== -->
+            <div id="tabContent-videos" class="tab-content hidden space-y-4">
+                <div class="glass p-5 rounded-2xl border-dashed border-2 hover:border-purple-500/50 active:scale-[0.99] transition cursor-pointer text-center" style="border-color: var(--subtle-border);" onclick="triggerUpload('video')">
+                    <input type="file" id="fileInput-video" class="hidden" accept="video/*" multiple onchange="handleFileSelect(event, 'video')">
+                    <div class="flex flex-col items-center py-2 space-y-2">
+                        <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                            <i data-lucide="video" class="w-6 h-6"></i>
+                        </div>
+                        <h3 class="text-sm sm:text-base font-semibold" style="color: var(--text-primary);">Tap to Upload Videos</h3>
+                        <p class="text-xs" style="color: var(--text-secondary);">MP4, MOV, MKV up to <strong>2 GB</strong></p>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-3.5 sm:p-5">
+                    <div class="flex items-center justify-between mb-3 pb-2 border-b" style="border-color: var(--border-divider);">
+                        <h3 class="font-semibold text-sm sm:text-base flex items-center" style="color: var(--text-primary);">
+                            <i data-lucide="film" class="w-4 h-4 mr-2 text-purple-500"></i> Video Vault
+                        </h3>
+                        <button onclick="fetchCategoryFiles('video')" class="p-1.5 rounded-lg border hover:opacity-80 transition" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div id="videosGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3.5"></div>
+                </div>
+            </div>
+
+            <!-- ==================== TAB 4: SEND TEXT ==================== -->
+            <div id="tabContent-notes" class="tab-content hidden space-y-4">
+                <div class="glass p-3.5 sm:p-5 rounded-2xl space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold uppercase tracking-wider text-sky-500 flex items-center">
+                            <i data-lucide="message-square" class="w-4 h-4 mr-1.5"></i> Quick Text Dispatch
+                        </span>
+                        <span class="text-[11px]" style="color: var(--text-secondary);">Channel 2</span>
+                    </div>
+                    <textarea id="noteInput" rows="3" placeholder="Type a message, note, or link to send..." class="w-full p-3 border rounded-xl text-base sm:text-sm focus:outline-none focus:border-sky-500 transition resize-none"></textarea>
+                    <div class="flex justify-end">
+                        <button onclick="sendNote()" class="px-4 py-2.5 bg-sky-500 hover:bg-sky-600 active:scale-95 text-white text-xs sm:text-sm font-medium rounded-xl flex items-center space-x-1.5 transition shadow-lg shadow-sky-500/20">
+                            <i data-lucide="send" class="w-4 h-4"></i>
+                            <span>Send to Telegram</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-3.5 sm:p-5">
+                    <div class="flex items-center justify-between mb-3 pb-2 border-b" style="border-color: var(--border-divider);">
+                        <h3 class="font-semibold text-sm sm:text-base flex items-center" style="color: var(--text-primary);">
+                            <i data-lucide="bookmark" class="w-4 h-4 mr-2 text-sky-500"></i> Saved Notes
+                        </h3>
+                        <button onclick="fetchNotes()" class="p-1.5 rounded-lg border hover:opacity-80 transition" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div id="notesContainer" class="space-y-2.5"></div>
+                </div>
+            </div>
+
+            <!-- ==================== TAB 5: TO-DO LIST ==================== -->
+            <div id="tabContent-todos" class="tab-content hidden space-y-4">
+                <div class="glass p-3 sm:p-4 rounded-2xl flex items-center space-x-2">
+                    <input type="text" id="todoInput" placeholder="What needs to be done?" onkeydown="if(event.key==='Enter') createTodo()" class="flex-1 min-w-0 px-3.5 py-2.5 border rounded-xl text-base sm:text-sm focus:outline-none focus:border-sky-500 transition">
+                    <button onclick="createTodo()" class="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-xs sm:text-sm font-medium rounded-xl flex items-center space-x-1 transition shadow-lg shadow-emerald-500/20 shrink-0">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span>Add</span>
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between px-1 text-xs">
+                    <div class="flex items-center space-x-1 glass p-1 rounded-xl">
+                        <button onclick="filterTodos('all')" id="todoFilter-all" class="px-2.5 py-1 rounded-lg font-medium shadow-sm transition" style="background-color: var(--subtle-bg); color: var(--text-primary);">All</button>
+                        <button onclick="filterTodos('active')" id="todoFilter-active" class="px-2.5 py-1 rounded-lg font-medium transition hover:opacity-80" style="color: var(--text-secondary);">Active</button>
+                        <button onclick="filterTodos('completed')" id="todoFilter-completed" class="px-2.5 py-1 rounded-lg font-medium transition hover:opacity-80" style="color: var(--text-secondary);">Completed</button>
+                    </div>
+                    <button onclick="clearCompletedTodos()" class="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 font-medium flex items-center space-x-1 active:scale-95 transition">
+                        <i data-lucide="check-check" class="w-3.5 h-3.5"></i>
+                        <span>Clear Completed</span>
+                    </button>
+                </div>
+
+                <div class="glass rounded-2xl overflow-hidden">
+                    <div id="todosContainer"></div>
+                </div>
+            </div>
+
+            <!-- Dual Upload Progress Popup (Stage 1: Device -> Server, Stage 2: Server -> Telegram) -->
+            <div id="uploadProgressCard" class="hidden glass p-3.5 sm:p-4 rounded-2xl border border-sky-500/40 shadow-2xl fixed bottom-20 sm:bottom-4 left-3 right-3 sm:left-auto sm:right-6 sm:w-96 z-50 max-w-[calc(100%-1.5rem)] space-y-2.5">
+                <!-- Header: File info and cancel -->
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2.5 min-w-0 flex-1 mr-2">
+                        <div id="uploadCardIconBox" class="p-2 bg-sky-500/20 text-sky-500 rounded-xl shrink-0">
+                            <i data-lucide="arrow-up-circle" class="w-4 h-4 animate-bounce" id="uploadMainIcon"></i>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h4 id="uploadFileName" class="text-xs sm:text-sm font-semibold truncate" style="color: var(--text-primary);">Uploading...</h4>
+                            <span id="uploadTotalSize" class="text-[11px] font-mono" style="color: var(--text-secondary);">0.0 MB total</span>
+                        </div>
+                    </div>
+                    <button id="cancelUploadBtn" class="text-xs px-2.5 py-1 bg-red-500/15 hover:bg-red-500/25 text-red-500 border border-red-500/30 rounded-lg shrink-0 transition">Cancel</button>
+                </div>
+
+                <!-- Stage 1: Browser -> Server -->
+                <div class="p-2.5 rounded-xl border space-y-1.5" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                    <div class="flex items-center justify-between text-[11px]">
+                        <span class="font-medium flex items-center space-x-1" style="color: var(--text-primary);">
+                            <span class="w-1.5 h-1.5 rounded-full bg-sky-500 inline-block"></span>
+                            <span>1. Device ➔ Server</span>
+                        </span>
+                        <div class="flex items-center space-x-1.5 font-mono">
+                            <span id="stage1Speed" class="text-[10px] text-sky-400">0 MB/s</span>
+                            <span id="stage1Percent" class="font-bold text-sky-500">0%</span>
+                        </div>
+                    </div>
+                    <div class="w-full rounded-full h-1.5 overflow-hidden" style="background-color: var(--card-bg);">
+                        <div id="stage1ProgressBar" class="bg-gradient-to-r from-sky-500 to-blue-500 h-1.5 rounded-full transition-all duration-150" style="width: 0%"></div>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px]" style="color: var(--text-secondary);">
+                        <span id="stage1Details" class="font-mono">0 MB / 0 MB</span>
+                        <span id="stage1Status" class="font-medium text-sky-500">Uploading...</span>
+                    </div>
+                </div>
+
+                <!-- Stage 2: Server -> Telegram Cloud -->
+                <div class="p-2.5 rounded-xl border space-y-1.5" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                    <div class="flex items-center justify-between text-[11px]">
+                        <span class="font-medium flex items-center space-x-1" style="color: var(--text-primary);">
+                            <span id="stage2IndicatorDot" class="w-1.5 h-1.5 rounded-full bg-slate-500 inline-block"></span>
+                            <span>2. Server ➔ Telegram Vault</span>
+                        </span>
+                        <div class="flex items-center space-x-1.5 font-mono">
+                            <span id="stage2Speed" class="text-[10px] text-indigo-400">-- MB/s</span>
+                            <span id="stage2Percent" class="font-bold text-slate-400">0%</span>
+                        </div>
+                    </div>
+                    <div class="w-full rounded-full h-1.5 overflow-hidden" style="background-color: var(--card-bg);">
+                        <div id="stage2ProgressBar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-1.5 rounded-full transition-all duration-200" style="width: 0%"></div>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px]" style="color: var(--text-secondary);">
+                        <span id="stage2Details" class="font-mono">Waiting for device upload...</span>
+                        <span id="stage2Eta" class="font-medium text-purple-400"></span>
+                    </div>
+                </div>
+
+                <!-- [TEMP ENHANCEMENT]: Real-Time Live Diagnostics -->
+                <div id="tempEnhancementBox" class="p-2.5 rounded-xl border space-y-1.5 text-[11px]" style="background-color: var(--card-bg); border-color: var(--border-divider);">
+                    <div class="flex items-center justify-between border-b pb-1" style="border-color: var(--border-divider);">
+                        <span class="font-semibold flex items-center space-x-1.5 text-amber-500 text-[10px]">
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping inline-block"></span>
+                            <span>Temp Enhancement: Live Telemetry</span>
+                        </span>
+                        <span id="tempConnBadge" class="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-400 font-mono">MTProto Sync</span>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-1.5 font-mono text-[10px]" style="color: var(--text-secondary);">
+                        <div>
+                            <span class="block text-[8px] uppercase tracking-wider text-slate-400">Chunk Streamed</span>
+                            <span id="tempChunkInfo" class="font-bold text-sky-400">-- / --</span>
+                        </div>
+                        <div>
+                            <span class="block text-[8px] uppercase tracking-wider text-slate-400">Exact Transferred</span>
+                            <span id="tempDataInfo" class="font-bold text-slate-300">0 MB / 0 MB</span>
+                        </div>
+                        <div>
+                            <span class="block text-[8px] uppercase tracking-wider text-slate-400">Throughput (Speed)</span>
+                            <span id="tempThroughputInfo" class="font-bold text-emerald-400">-- KB/s</span>
+                        </div>
+                        <div>
+                            <span class="block text-[8px] uppercase tracking-wider text-slate-400">Time Elapsed</span>
+                            <span id="tempElapsedTime" class="font-bold text-slate-300">0s</span>
+                        </div>
+                    </div>
+                    <div class="pt-1 border-t flex items-center justify-between text-[9px]" style="border-color: var(--border-divider); color: var(--text-secondary);">
+                        <span id="tempEstimatedRemaining" class="text-purple-400 font-medium">Est. Remaining: --</span>
+                        <span class="text-slate-400 font-mono">Part Size: 512 KB</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- ==================== MOBILE BOTTOM NAVIGATION BAR ==================== -->
+        <nav class="sm:hidden fixed bottom-0 inset-x-0 w-full max-w-full glass border-t z-40 px-1 py-1.5 grid grid-cols-6 items-center justify-around overflow-hidden" style="border-color: var(--card-border);">
+            <button onclick="switchTab('softwares')" id="mobileNav-softwares" class="flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0" style="color: var(--text-secondary);">
+                <i data-lucide="box" class="w-4 h-4"></i>
+                <span class="text-[9px] mt-0.5 font-medium truncate">Softwares</span>
+            </button>
+            <button onclick="switchTab('files')" id="mobileNav-files" class="flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0" style="color: var(--text-secondary);">
+                <div class="relative">
+                    <i data-lucide="folder" class="w-4 h-4"></i>
+                    <i data-lucide="lock" class="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1.5 mobile-tab-lock"></i>
+                </div>
+                <span class="text-[9px] mt-0.5 font-medium truncate">Files</span>
+            </button>
+            <button onclick="switchTab('photos')" id="mobileNav-photos" class="flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0" style="color: var(--text-secondary);">
+                <div class="relative">
+                    <i data-lucide="image" class="w-4 h-4"></i>
+                    <i data-lucide="lock" class="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1.5 mobile-tab-lock"></i>
+                </div>
+                <span class="text-[9px] mt-0.5 font-medium truncate">Photos</span>
+            </button>
+            <button onclick="switchTab('videos')" id="mobileNav-videos" class="flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0" style="color: var(--text-secondary);">
+                <div class="relative">
+                    <i data-lucide="video" class="w-4 h-4"></i>
+                    <i data-lucide="lock" class="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1.5 mobile-tab-lock"></i>
+                </div>
+                <span class="text-[9px] mt-0.5 font-medium truncate">Videos</span>
+            </button>
+            <button onclick="switchTab('notes')" id="mobileNav-notes" class="flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0" style="color: var(--text-secondary);">
+                <div class="relative">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    <i data-lucide="lock" class="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1.5 mobile-tab-lock"></i>
+                </div>
+                <span class="text-[9px] mt-0.5 font-medium truncate">Notes</span>
+            </button>
+            <button onclick="switchTab('todos')" id="mobileNav-todos" class="flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0 relative" style="color: var(--text-secondary);">
+                <div class="relative">
+                    <i data-lucide="check-square" class="w-4 h-4"></i>
+                    <i data-lucide="lock" class="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1.5 mobile-tab-lock"></i>
+                </div>
+                <span class="text-[9px] mt-0.5 font-medium truncate">To-Do</span>
+                <span id="todoActiveBadge-mobile" class="hidden absolute top-0 right-0.5 w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Lightbox Modal -->
+    <div id="lightboxModal" class="hidden fixed inset-0 z-50 backdrop-blur-md flex items-center justify-center p-4" style="background-color: var(--lightbox-overlay);" onclick="closeLightbox()">
+        <div class="relative max-w-4xl max-h-[90vh] flex flex-col items-center" onclick="event.stopPropagation()">
+            <button onclick="closeLightbox()" class="absolute -top-10 right-0 p-1.5 text-white/80 hover:text-white" title="Close"><i data-lucide="x" class="w-6 h-6"></i></button>
+            <img id="lightboxImg" src="" class="max-w-full max-h-[80vh] rounded-xl object-contain shadow-2xl">
+            <div class="flex items-center justify-between w-full mt-2.5 px-2">
+                <h4 id="lightboxCaption" class="text-xs sm:text-sm text-slate-200 font-medium truncate flex-1 mr-3"></h4>
+                <button id="lightboxDownloadBtn" class="px-3 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-medium flex items-center space-x-1.5 transition shrink-0"><i data-lucide="download" class="w-3.5 h-3.5"></i> <span>Download</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Channel Setup Modal -->
+    <div id="configModal" class="hidden fixed inset-0 z-50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4" style="background-color: var(--modal-overlay);">
+        <div class="glass max-w-lg w-full rounded-2xl p-5 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between pb-3 border-b" style="border-color: var(--border-divider);">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="network" class="w-5 h-5 text-sky-500"></i>
+                    <h3 class="font-semibold text-base" style="color: var(--text-primary);">Telegram Channel Configuration</h3>
+                </div>
+                <button onclick="toggleConfigModal(false)" class="p-1 hover:opacity-80" style="color: var(--text-secondary);">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="space-y-2 text-xs">
+                <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                    <strong class="block" style="color: var(--text-primary);">Channel 1: Files, Photos & Videos</strong>
+                    <span class="font-mono text-[11px]" style="color: var(--text-secondary);">ID: -1003983927893 (Storage Vault)</span>
+                </div>
+                <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                    <strong class="block" style="color: var(--text-primary);">Channel 2: Tasks & Quick Notes</strong>
+                    <span class="font-mono text-[11px]" style="color: var(--text-secondary);">ID: -1004382319669 (Todo & Notes Vault)</span>
+                </div>
+                <div class="p-3 rounded-xl border" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                    <strong class="block" style="color: var(--text-primary);">Channel 3: Softwares & Applications</strong>
+                    <span class="font-mono text-[11px]" style="color: var(--text-secondary);">ID: -1004334670893 (Software Vault)</span>
+                </div>
+            </div>
+            <div class="pt-2 flex justify-end">
+                <button onclick="toggleConfigModal(false)" class="w-full sm:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl font-medium text-xs transition">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Download Live Progress Card -->
+    <div id="downloadToast" class="fixed bottom-20 sm:bottom-6 right-3 sm:right-6 z-50 transition-all duration-300 transform translate-y-10 opacity-0 pointer-events-none max-w-sm w-[calc(100%-1.5rem)] sm:w-96">
+        <div class="glass p-3.5 sm:p-4 rounded-2xl border border-sky-500/40 shadow-2xl space-y-2.5" style="background-color: var(--card-bg);">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2.5 min-w-0 flex-1 mr-2">
+                    <div id="downloadToastIconBox" class="w-8 h-8 rounded-xl bg-sky-500/20 text-sky-500 flex items-center justify-center shrink-0">
+                        <i data-lucide="loader-2" class="w-4 h-4 animate-spin" id="downloadToastSpinner"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h5 class="font-semibold text-xs sm:text-sm truncate" id="downloadToastTitle" style="color: var(--text-primary);">Downloading from Telegram...</h5>
+                        <p class="text-[11px] truncate font-medium" id="downloadToastFilename" style="color: var(--text-secondary);"></p>
+                    </div>
+                </div>
+                <div class="text-right shrink-0">
+                    <span id="downloadToastPercent" class="font-mono font-bold text-xs sm:text-sm text-sky-500">0%</span>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="w-full rounded-full h-2 overflow-hidden" style="background-color: var(--subtle-bg);">
+                <div id="downloadToastBar" class="bg-gradient-to-r from-sky-500 to-blue-500 h-2 rounded-full transition-all duration-100" style="width: 0%"></div>
+            </div>
+
+            <div class="flex items-center justify-between text-[11px]" style="color: var(--text-secondary);">
+                <span id="downloadToastDetails" class="font-mono">0.0 MB / 0.0 MB</span>
+                <span id="downloadToastStatus" class="font-medium text-emerald-500">Active</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        let currentTab = 'softwares';
+        let currentTodoFilter = 'all';
+        let currentXHR = null;
+        let isUnlocked = false;
+        let pendingTab = null;
+
+        function refreshIcons() {
+            try {
+                if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                    window.lucide.createIcons();
+                }
+            } catch (err) {
+                console.warn('Lucide icon rendering error:', err);
+            }
+        }
+
+        refreshIcons();
+
+        // ==================== AUTHENTICATION & LOCK STATE ====================
+
+        function updateLockStateUI(unlocked) {
+            isUnlocked = unlocked;
+            const lockIcons = document.querySelectorAll('.tab-lock-icon, .mobile-tab-lock');
+            lockIcons.forEach(el => {
+                // Keep lock indicators on private tabs visible
+                el.classList.remove('hidden');
+            });
+
+            const headerLockBtn = document.getElementById('headerLockBtn');
+            if (headerLockBtn) {
+                if (unlocked) {
+                    headerLockBtn.title = "Lock Workspace";
+                    headerLockBtn.innerHTML = `<i data-lucide="unlock" class="w-3.5 h-3.5 sm:w-5 sm:h-5 text-emerald-500"></i>`;
+                } else {
+                    headerLockBtn.title = "Unlock Private Vault";
+                    headerLockBtn.innerHTML = `<i data-lucide="lock" class="w-3.5 h-3.5 sm:w-5 sm:h-5 text-amber-500"></i>`;
+                }
+            }
+            refreshIcons();
+        }
+
+        function showLockModal(show) {
+            const overlay = document.getElementById('lockScreenOverlay');
+            if (!overlay) return;
+            if (show) {
+                overlay.classList.remove('hidden');
+                const input = document.getElementById('passwordInput');
+                if (input) {
+                    input.value = '';
+                    setTimeout(() => input.focus(), 150);
+                }
+                const errorMsg = document.getElementById('lockErrorMsg');
+                if (errorMsg) errorMsg.classList.add('hidden');
+            } else {
+                overlay.classList.add('hidden');
+            }
+        }
+
+        function closeLockModal() {
+            showLockModal(false);
+            pendingTab = null;
+            if (currentTab !== 'softwares' && !isUnlocked) {
+                activateTab('softwares');
+            }
+        }
+
+        function goToPublicSoftwares() {
+            closeLockModal();
+            pendingTab = null;
+            activateTab('softwares');
+        }
+
+        function toggleLockOrModal() {
+            if (isUnlocked) {
+                lockApp();
+            } else {
+                pendingTab = 'files';
+                showLockModal(true);
+            }
+        }
+
+        async function checkAuth() {
+            // Page reload: MANDATORY lock on all private tabs & default to Softwares tab!
+            isUnlocked = false;
+            pendingTab = null;
+            localStorage.removeItem('tg_auth');
+            updateLockStateUI(false);
+            initApp('softwares');
+            return false;
+        }
+
+        function initApp(tab = 'softwares') {
+            fetchStatus();
+            activateTab(tab, true);
+            // Automatic background prefetch on opening site
+            fetch('/api/prefetch').then(res => res.json()).then(data => {
+                if (data && data.imported_files > 0) {
+                    fetchCategoryFiles(currentTab === 'softwares' ? 'software' : (currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file')));
+                }
+            }).catch(() => {});
+        }
+
+        async function handleUnlock(e) {
+            if (e) {
+                try { e.preventDefault(); } catch (_) {}
+                try { e.stopPropagation(); } catch (_) {}
+            }
+            const input = document.getElementById('passwordInput');
+            const errorMsg = document.getElementById('lockErrorMsg');
+            const lockCard = document.getElementById('lockCard');
+            const password = (input && input.value ? input.value : '').trim();
+
+            if (password.toLowerCase() === 'allow') {
+                document.cookie = "tg_auth=Allow; path=/; max-age=3600; SameSite=Lax";
+                showLockModal(false);
+                isUnlocked = true;
+                updateLockStateUI(true);
+
+                // Inform backend asynchronously
+                try {
+                    fetch('/api/auth/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: 'Allow' })
+                    });
+                } catch (ignore) {}
+
+                const targetTab = pendingTab || 'files';
+                pendingTab = null;
+                activateTab(targetTab);
+                return false;
+            }
+
+            // If incorrect password
+            if (errorMsg) {
+                errorMsg.textContent = "Incorrect password.";
+                errorMsg.classList.remove('hidden');
+            }
+            if (lockCard) {
+                lockCard.classList.remove('animate-shake');
+                void lockCard.offsetWidth; // Trigger reflow
+                lockCard.classList.add('animate-shake');
+                setTimeout(() => lockCard.classList.remove('animate-shake'), 500);
+            }
+            if (input) {
+                input.focus();
+                input.select();
+            }
+            return false;
+        }
+
+        function lockApp() {
+            isUnlocked = false;
+            pendingTab = null;
+            localStorage.removeItem('tg_auth');
+            document.cookie = "tg_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            updateLockStateUI(false);
+            activateTab('softwares');
+        }
+
+        // ==================== NAVIGATION TABS ====================
+
+        function switchTab(tab) {
+            if (tab === currentTab) {
+                return;
+            }
+
+            // Software tab is completely public, no lock required
+            if (tab === 'softwares') {
+                isUnlocked = false;
+                updateLockStateUI(false);
+                activateTab('softwares');
+                return;
+            }
+
+            // Mandatory lock on all other tabs for every tab switch!
+            isUnlocked = false;
+            pendingTab = tab;
+            showLockModal(true);
+        }
+
+        function activateTab(tab, doPrefetch = false) {
+            currentTab = tab;
+
+            // Desktop tab buttons
+            const tabList = ['softwares', 'files', 'photos', 'videos', 'notes', 'todos'];
+            tabList.forEach(t => {
+                const btn = document.getElementById(`tabBtn-${t}-desktop`);
+                if (btn) {
+                    if (t === tab) {
+                        btn.className = "tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition bg-sky-500 text-white shadow-md";
+                        btn.style.color = "#ffffff";
+                        btn.style.backgroundColor = "";
+                    } else {
+                        btn.className = "tab-btn-desktop flex-1 py-2 px-3 rounded-xl font-medium text-sm flex items-center justify-center space-x-1.5 transition hover:opacity-80";
+                        btn.style.color = "var(--text-secondary)";
+                        btn.style.backgroundColor = "transparent";
+                    }
+                }
+
+                const mBtn = document.getElementById(`mobileNav-${t}`);
+                if (mBtn) {
+                    if (t === tab) {
+                        mBtn.className = "flex flex-col items-center text-sky-500 py-1 px-0.5 rounded-xl transition scale-105 min-w-0";
+                        mBtn.style.color = "";
+                    } else {
+                        mBtn.className = "flex flex-col items-center py-1 px-0.5 rounded-xl transition min-w-0";
+                        mBtn.style.color = "var(--text-secondary)";
+                    }
+                }
+            });
+
+            // Content show/hide
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            const activeContent = document.getElementById(`tabContent-${tab}`);
+            if (activeContent) activeContent.classList.remove('hidden');
+
+            if (tab === 'softwares') fetchCategoryFiles('software', doPrefetch);
+            else if (tab === 'files') fetchCategoryFiles('file', doPrefetch);
+            else if (tab === 'photos') fetchCategoryFiles('photo', doPrefetch);
+            else if (tab === 'videos') fetchCategoryFiles('video', doPrefetch);
+            else if (tab === 'notes') fetchNotes();
+            else if (tab === 'todos') fetchTodos();
+
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            refreshIcons();
+        }
+
+        // ==================== LIVE DOWNLOAD WITH PROGRESS & ANIMATION ====================
+
+        const activeDownloads = {};
+        const originalBtnMap = {};
+
+        function handleDownloadClick(btn, isSoftware) {
+            if (!btn) return;
+            const fileId = btn.getAttribute('data-id');
+            const filename = btn.getAttribute('data-name');
+            const sizeStr = btn.getAttribute('data-size');
+            const totalBytes = sizeStr ? parseInt(sizeStr, 10) : 0;
+            startLiveDownload(fileId, filename, totalBytes, btn, isSoftware);
+        }
+
+        function startLiveDownload(fileId, filename, totalBytes, btnElement, isSoftware = false) {
+            if (activeDownloads[fileId]) {
+                return; // Already actively downloading this file
+            }
+
+            // 1. Overlay animated loading icon + live % upon the file's icon
+            const fileIcon = document.getElementById(`fileIcon-${fileId}`);
+            if (fileIcon) {
+                if (!fileIcon.classList.contains('relative')) fileIcon.classList.add('relative');
+                let existingOverlay = document.getElementById(`fileIconOverlay-${fileId}`);
+                if (!existingOverlay) {
+                    const isMediaCard = fileIcon.classList.contains('aspect-square') || fileIcon.classList.contains('aspect-video');
+                    const spinnerSize = isMediaCard ? 'w-8 h-8' : 'w-4 h-4 sm:w-5 sm:h-5';
+                    const textSize = isMediaCard ? 'text-xs sm:text-sm px-2 py-0.5 rounded-md bg-black/60' : 'text-[9px] sm:text-[10px] leading-none';
+                    
+                    const overlay = document.createElement('div');
+                    overlay.id = `fileIconOverlay-${fileId}`;
+                    overlay.className = `absolute inset-0 ${isSoftware ? 'bg-purple-950/85' : 'bg-slate-950/85'} backdrop-blur-sm rounded-xl flex flex-col items-center justify-center z-20 transition-all duration-200 p-1 select-none`;
+                    overlay.innerHTML = `
+                        <i data-lucide="loader-2" class="${spinnerSize} ${isSoftware ? 'text-purple-400' : 'text-sky-400'} animate-spin shrink-0"></i>
+                        <span id="fileIconPercent-${fileId}" class="${textSize} font-bold font-mono text-white mt-1 tracking-tight">0%</span>
+                    `;
+                    fileIcon.appendChild(overlay);
+                    refreshIcons();
+                }
+            }
+
+            // 2. Animated progress indicator on the download button
+            if (btnElement) {
+                originalBtnMap[fileId] = btnElement.innerHTML;
+                btnElement.style.pointerEvents = 'none';
+                btnElement.innerHTML = `
+                    <div class="flex items-center space-x-1">
+                        <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin ${isSoftware ? 'text-purple-500' : 'text-sky-500'} shrink-0"></i>
+                        <span id="btnPercent-${fileId}" class="text-[10px] font-bold font-mono ${isSoftware ? 'text-purple-600 dark:text-purple-400' : 'text-sky-500'}">0%</span>
+                    </div>
+                `;
+                refreshIcons();
+            }
+
+            // 3. Show live floating download progress card (stays visible until completed)
+            const toast = document.getElementById('downloadToast');
+            const toastTitle = document.getElementById('downloadToastTitle');
+            const toastFilename = document.getElementById('downloadToastFilename');
+            const toastPercent = document.getElementById('downloadToastPercent');
+            const toastBar = document.getElementById('downloadToastBar');
+            const toastDetails = document.getElementById('downloadToastDetails');
+            const toastStatus = document.getElementById('downloadToastStatus');
+            const toastIconBox = document.getElementById('downloadToastIconBox');
+
+            if (toastTitle) toastTitle.textContent = isSoftware ? "Downloading Software..." : "Downloading from Telegram...";
+            if (toastFilename) toastFilename.textContent = filename || "File";
+            if (toastPercent) toastPercent.textContent = "0%";
+            if (toastBar) {
+                toastBar.style.width = "0%";
+                toastBar.className = "bg-gradient-to-r from-sky-500 to-blue-500 h-2 rounded-full transition-all duration-100";
+            }
+            if (toastDetails) {
+                const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) + " MB" : "...";
+                toastDetails.textContent = `0.0 MB / ${totalMB}`;
+            }
+            if (toastStatus) {
+                toastStatus.textContent = "Connecting...";
+                toastStatus.className = "font-medium text-sky-500";
+            }
+            if (toastIconBox) {
+                toastIconBox.className = "w-8 h-8 rounded-xl bg-sky-500/20 text-sky-500 flex items-center justify-center shrink-0";
+                toastIconBox.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>`;
+                refreshIcons();
+            }
+
+            if (toast) {
+                toast.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-10');
+                toast.classList.add('opacity-100', 'translate-y-0');
+            }
+
+            // 4. Start XHR download with real-time progress callbacks
+            const authParam = isSoftware ? '' : '?auth=Allow';
+            const downloadUrl = `/api/download/${fileId}${authParam}`;
+
+            const xhr = new XMLHttpRequest();
+            activeDownloads[fileId] = { xhr, filename, totalBytes };
+
+            xhr.open('GET', downloadUrl, true);
+            xhr.responseType = 'blob';
+            if (!isSoftware) {
+                xhr.setRequestHeader('X-Auth-Token', 'Allow');
+            }
+
+            xhr.onprogress = (e) => {
+                let currentTotal = totalBytes;
+                if (e.lengthComputable && e.total > 0) {
+                    currentTotal = e.total;
+                }
+                let percent = 0;
+                if (currentTotal > 0) {
+                    percent = Math.min(99, Math.round((e.loaded / currentTotal) * 100));
+                }
+
+                // Live % upon the file icon
+                const iconPercent = document.getElementById(`fileIconPercent-${fileId}`);
+                if (iconPercent) iconPercent.textContent = `${percent}%`;
+
+                // Live % on the download button
+                const btnPercent = document.getElementById(`btnPercent-${fileId}`);
+                if (btnPercent) btnPercent.textContent = `${percent}%`;
+
+                // Live % and progress bar on floating card
+                if (toastPercent) toastPercent.textContent = `${percent}%`;
+                if (toastBar) toastBar.style.width = `${percent}%`;
+                if (toastDetails) {
+                    const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
+                    const totalMB = currentTotal > 0 ? (currentTotal / (1024 * 1024)).toFixed(1) : '?';
+                    toastDetails.textContent = `${loadedMB} MB / ${totalMB} MB`;
+                }
+                if (toastStatus) {
+                    toastStatus.textContent = "Downloading";
+                }
+            };
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    const blob = xhr.response;
+                    const finalSize = blob ? blob.size : totalBytes;
+                    const finalMB = (finalSize / (1024 * 1024)).toFixed(1);
+
+                    // 100% Completed on File Icon
+                    const overlay = document.getElementById(`fileIconOverlay-${fileId}`);
+                    if (overlay) {
+                        overlay.innerHTML = `
+                            <i data-lucide="check" class="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 shrink-0"></i>
+                            <span class="text-[9px] sm:text-[10px] font-bold font-mono text-emerald-300 mt-0.5 leading-none">100%</span>
+                        `;
+                        refreshIcons();
+                    }
+
+                    // 100% on Button
+                    if (btnElement) {
+                        btnElement.innerHTML = `
+                            <div class="flex items-center space-x-1">
+                                <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-500 shrink-0"></i>
+                                <span class="text-[10px] font-bold font-mono text-emerald-500">100%</span>
+                            </div>
+                        `;
+                        refreshIcons();
+                    }
+
+                    // 100% on Floating Card
+                    if (toastTitle) toastTitle.textContent = "Download Complete!";
+                    if (toastPercent) toastPercent.textContent = "100%";
+                    if (toastBar) {
+                        toastBar.style.width = "100%";
+                        toastBar.className = "bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full transition-all duration-150";
+                    }
+                    if (toastDetails) toastDetails.textContent = `${finalMB} MB / ${finalMB} MB`;
+                    if (toastStatus) {
+                        toastStatus.textContent = "Completed";
+                        toastStatus.className = "font-medium text-emerald-500";
+                    }
+                    if (toastIconBox) {
+                        toastIconBox.className = "w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0";
+                        toastIconBox.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i>`;
+                        refreshIcons();
+                    }
+
+                    // Deliver file to browser
+                    const blobUrl = window.URL.createObjectURL(blob);
+                    const tempLink = document.createElement('a');
+                    tempLink.href = blobUrl;
+                    tempLink.setAttribute('download', filename || 'download');
+                    tempLink.style.display = 'none';
+                    document.body.appendChild(tempLink);
+                    tempLink.click();
+                    setTimeout(() => {
+                        tempLink.remove();
+                        window.URL.revokeObjectURL(blobUrl);
+                    }, 20000);
+
+                    // Don't remove till download completed: keep visible for 2.2s then cleanly dismiss
+                    setTimeout(() => {
+                        const ov = document.getElementById(`fileIconOverlay-${fileId}`);
+                        if (ov) {
+                            ov.style.opacity = '0';
+                            setTimeout(() => ov.remove(), 250);
+                        }
+
+                        if (btnElement && originalBtnMap[fileId]) {
+                            btnElement.innerHTML = originalBtnMap[fileId];
+                            btnElement.style.pointerEvents = '';
+                            delete originalBtnMap[fileId];
+                            refreshIcons();
+                        }
+
+                        if (toast) {
+                            toast.classList.remove('opacity-100', 'translate-y-0');
+                            toast.classList.add('opacity-0', 'pointer-events-none', 'translate-y-10');
+                            if (toastBar) toastBar.className = "bg-gradient-to-r from-sky-500 to-blue-500 h-2 rounded-full transition-all duration-150";
+                        }
+                        delete activeDownloads[fileId];
+                    }, 2200);
+                } else {
+                    handleDownloadError(fileId, btnElement, "Download failed (Server returned " + xhr.status + ")");
+                }
+            };
+
+            xhr.onerror = () => {
+                handleDownloadError(fileId, btnElement, "Network error during download");
+            };
+
+            xhr.send();
+        }
+
+        function handleDownloadError(fileId, btnElement, errorMsg) {
+            const overlay = document.getElementById(`fileIconOverlay-${fileId}`);
+            if (overlay) {
+                overlay.innerHTML = `
+                    <i data-lucide="alert-circle" class="w-4 h-4 text-red-400 shrink-0"></i>
+                    <span class="text-[9px] font-bold text-red-300 mt-0.5">Failed</span>
+                `;
+                refreshIcons();
+                setTimeout(() => {
+                    overlay.style.opacity = '0';
+                    setTimeout(() => overlay.remove(), 250);
+                }, 2000);
+            }
+
+            if (btnElement && originalBtnMap[fileId]) {
+                btnElement.innerHTML = originalBtnMap[fileId];
+                btnElement.style.pointerEvents = '';
+                delete originalBtnMap[fileId];
+                refreshIcons();
+            }
+
+            const toastTitle = document.getElementById('downloadToastTitle');
+            const toastStatus = document.getElementById('downloadToastStatus');
+            if (toastTitle) toastTitle.textContent = "Download Error";
+            if (toastStatus) {
+                toastStatus.textContent = errorMsg;
+                toastStatus.className = "font-medium text-red-500";
+            }
+            setTimeout(() => {
+                const toast = document.getElementById('downloadToast');
+                if (toast) {
+                    toast.classList.remove('opacity-100', 'translate-y-0');
+                    toast.classList.add('opacity-0', 'pointer-events-none', 'translate-y-10');
+                }
+                delete activeDownloads[fileId];
+            }, 3000);
+        }
+
+        // ==================== FILES, SOFTWARES, PHOTOS, VIDEOS ====================
+
+        async function fetchCategoryFiles(category, prefetch = false) {
+            try {
+                const headers = {};
+                if (isUnlocked) {
+                    headers['X-Auth-Token'] = 'Allow';
+                }
+                const prefetchParam = prefetch ? '&prefetch=true' : '';
+                const res = await fetch(`/api/files?category=${category}${prefetchParam}`, { headers });
+                if (res.status === 401) {
+                    if (category !== 'software') {
+                        pendingTab = category === 'file' ? 'files' : (category === 'photo' ? 'photos' : 'videos');
+                        showLockModal(true);
+                        return;
+                    }
+                }
+                const data = await res.json();
+
+                if (category === 'software') renderSoftwareList(data.files);
+                else if (category === 'file') renderFilesList(data.files);
+                else if (category === 'photo') renderPhotosGrid(data.files);
+                else if (category === 'video') renderVideosGrid(data.files);
+            } catch (err) {
+                console.error("Load error:", err);
+            }
+        }
+
+        function renderSoftwareList(files) {
+            const container = document.getElementById('filesContainer-software');
+            if (!container) return;
+            if (!files || files.length === 0) {
+                container.innerHTML = `
+                    <div class="p-6 sm:p-8 text-center space-y-3">
+                        <div class="w-12 h-12 rounded-2xl bg-purple-500/10 text-purple-500 flex items-center justify-center mx-auto">
+                            <i data-lucide="package-search" class="w-6 h-6"></i>
+                        </div>
+                        <div class="space-y-1">
+                            <h4 class="text-sm font-semibold" style="color: var(--text-primary);">No Software Files Found</h4>
+                            <p class="text-xs max-w-sm mx-auto leading-relaxed" style="color: var(--text-secondary);">
+                                Upload files above or add them directly to your Telegram channel.
+                            </p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20 max-w-md mx-auto text-left text-xs space-y-1.5 shadow-sm">
+                            <div class="flex items-center space-x-1.5 font-semibold text-purple-600 dark:text-purple-400">
+                                <i data-lucide="info" class="w-4 h-4 shrink-0"></i>
+                                <span>Telegram Software Channel (-1004334670893):</span>
+                            </div>
+                            <p class="text-[11px] leading-relaxed" style="color: var(--text-secondary);">
+                                If you posted files in Telegram and don't see them yet, ensure <strong>@my_cloud_vault_drive_bot</strong> is added as an <strong>Administrator</strong> in that channel with "Post Messages" permission.
+                            </p>
+                        </div>
+                        <button onclick="fetchCategoryFiles('software', true)" class="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-purple-500 text-white text-xs font-medium hover:bg-purple-600 active:scale-95 transition shadow-md shadow-purple-500/20">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                            <span>Check Telegram Now</span>
+                        </button>
+                    </div>
+                `;
+                refreshIcons();
+                return;
+            }
+            container.innerHTML = files.map(f => `
+                <div class="p-3 sm:p-3.5 flex items-center justify-between gap-2 sm:gap-3 hover:bg-[var(--item-hover)] transition active:opacity-90 min-w-0 w-full overflow-hidden border-b last:border-b-0" style="border-color: var(--border-divider);">
+                    <div class="flex items-center space-x-2.5 sm:space-x-3 min-w-0 flex-1 overflow-hidden">
+                        <div id="fileIcon-${f.id}" class="relative p-2 sm:p-2.5 bg-purple-500/10 text-purple-500 rounded-xl shrink-0 flex items-center justify-center overflow-hidden">
+                            <i data-lucide="box" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                        </div>
+                        <div class="min-w-0 flex-1 overflow-hidden">
+                            <h4 class="font-medium text-xs sm:text-sm truncate" style="color: var(--text-primary);">${escapeHtml(f.filename)}</h4>
+                            <div class="flex items-center space-x-2 text-[10px] sm:text-[11px] mt-0.5 min-w-0 truncate" style="color: var(--text-secondary);">
+                                <span class="font-mono font-medium shrink-0">${f.size_formatted}</span>
+                                <span>•</span>
+                                <span class="truncate">Public • Msg #${f.telegram_message_id}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
+                        <button id="downloadBtn-${f.id}" data-id="${f.id}" data-name="${escapeHtml(f.filename)}" data-size="${f.size || 0}" onclick="handleDownloadClick(this, true)" class="p-1.5 sm:p-2 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition flex items-center justify-center" title="Direct Download (Free)"><i data-lucide="download" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                        <button onclick="deleteSoftwareFile('${f.id}')" class="p-1.5 sm:p-2 rounded-xl bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete"><i data-lucide="trash-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                    </div>
+                </div>
+            `).join('');
+            refreshIcons();
+        }
+
+        async function deleteSoftwareFile(id) {
+            if (!isUnlocked) {
+                alert("Security password required to delete items from storage.");
+                pendingTab = 'softwares';
+                showLockModal(true);
+                return;
+            }
+            deleteFile(id);
+        }
+
+        function renderFilesList(files) {
+            const container = document.getElementById('filesContainer-file');
+            if (!files || files.length === 0) {
+                container.innerHTML = `<div class="p-8 text-center text-xs" style="color: var(--text-secondary);">No documents uploaded yet. Tap above to upload.</div>`;
+                return;
+            }
+            container.innerHTML = files.map(f => `
+                <div class="p-3 sm:p-3.5 flex items-center justify-between gap-2 sm:gap-3 hover:bg-[var(--item-hover)] transition active:opacity-90 min-w-0 w-full overflow-hidden border-b last:border-b-0" style="border-color: var(--border-divider);">
+                    <div class="flex items-center space-x-2.5 sm:space-x-3 min-w-0 flex-1 overflow-hidden">
+                        <div id="fileIcon-${f.id}" class="relative p-2 sm:p-2.5 bg-sky-500/10 text-sky-500 rounded-xl shrink-0 flex items-center justify-center overflow-hidden">
+                            <i data-lucide="file-text" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                        </div>
+                        <div class="min-w-0 flex-1 overflow-hidden">
+                            <h4 class="font-medium text-xs sm:text-sm truncate" style="color: var(--text-primary);">${escapeHtml(f.filename)}</h4>
+                            <div class="flex items-center space-x-2 text-[10px] sm:text-[11px] mt-0.5 min-w-0 truncate" style="color: var(--text-secondary);">
+                                <span class="font-mono font-medium shrink-0">${f.size_formatted}</span>
+                                <span>•</span>
+                                <span class="truncate">Msg #${f.telegram_message_id}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
+                        <button id="downloadBtn-${f.id}" data-id="${f.id}" data-name="${escapeHtml(f.filename)}" data-size="${f.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1.5 sm:p-2 rounded-xl bg-sky-500/15 text-sky-500 hover:bg-sky-500/25 transition flex items-center justify-center" title="Download Document"><i data-lucide="download" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                        <button onclick="deleteFile('${f.id}')" class="p-1.5 sm:p-2 rounded-xl bg-red-500/15 text-red-500 hover:bg-red-500/25 transition"><i data-lucide="trash-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i></button>
+                    </div>
+                </div>
+            `).join('');
+            refreshIcons();
+        }
+
+        function renderPhotosGrid(photos) {
+            const grid = document.getElementById('photosGrid');
+            if (!photos || photos.length === 0) {
+                grid.innerHTML = `<div class="col-span-full p-8 text-center text-xs" style="color: var(--text-secondary);">No photos uploaded yet.</div>`;
+                return;
+            }
+            grid.innerHTML = photos.map(p => `
+                <div id="fileIcon-${p.id}" class="group relative rounded-xl overflow-hidden glass border aspect-square flex items-center justify-center min-w-0 shadow-sm" style="border-color: var(--subtle-border); background-color: var(--subtle-bg);">
+                    <img src="/api/download/${p.id}?auth=Allow" loading="lazy" class="w-full h-full object-cover cursor-pointer group-hover:scale-105 transition duration-200" onclick="openLightbox('/api/download/${p.id}?auth=Allow', '${escapeHtml(p.filename)}', '${p.id}', ${p.size || 0})">
+                    <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 sm:p-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition min-w-0 z-10">
+                        <span class="text-[10px] text-white font-medium truncate max-w-[65px] sm:max-w-[90px]">${escapeHtml(p.filename)}</span>
+                        <div class="flex space-x-1 shrink-0">
+                            <button id="downloadBtn-${p.id}" data-id="${p.id}" data-name="${escapeHtml(p.filename)}" data-size="${p.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1 rounded-md bg-white/20 hover:bg-white/40 text-white flex items-center justify-center transition" title="Download Photo"><i data-lucide="download" class="w-3 h-3"></i></button>
+                            <button onclick="deleteFile('${p.id}')" class="p-1 rounded-md bg-red-500/60 hover:bg-red-500/80 text-white transition" title="Delete Photo"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            refreshIcons();
+        }
+
+        function renderVideosGrid(videos) {
+            const grid = document.getElementById('videosGrid');
+            if (!videos || videos.length === 0) {
+                grid.innerHTML = `<div class="col-span-full p-8 text-center text-xs" style="color: var(--text-secondary);">No videos uploaded yet.</div>`;
+                return;
+            }
+            grid.innerHTML = videos.map(v => `
+                <div class="glass rounded-xl overflow-hidden p-2.5 sm:p-3 space-y-2 border min-w-0 w-full shadow-sm" style="border-color: var(--subtle-border);">
+                    <div id="fileIcon-${v.id}" class="relative rounded-lg overflow-hidden bg-black aspect-video flex items-center justify-center min-w-0 w-full">
+                        <video controls playsinline preload="metadata" class="w-full h-full max-w-full">
+                            <source src="/api/download/${v.id}?auth=Allow" type="${v.mime_type || 'video/mp4'}">
+                        </video>
+                    </div>
+                    <div class="flex items-center justify-between text-xs pt-1 min-w-0">
+                        <div class="min-w-0 flex-1 mr-2 overflow-hidden">
+                            <h4 class="font-medium truncate text-xs sm:text-sm" style="color: var(--text-primary);" title="${escapeHtml(v.filename)}">${escapeHtml(v.filename)}</h4>
+                            <span class="text-[11px] font-mono" style="color: var(--text-secondary);">${v.size_formatted}</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5 shrink-0">
+                            <button id="downloadBtn-${v.id}" data-id="${v.id}" data-name="${escapeHtml(v.filename)}" data-size="${v.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1.5 rounded-lg bg-sky-500/15 text-sky-500 hover:bg-sky-500/25 transition flex items-center justify-center" title="Download Video"><i data-lucide="download" class="w-3.5 h-3.5"></i></button>
+                            <button onclick="deleteFile('${v.id}')" class="p-1.5 rounded-lg bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete Video"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            refreshIcons();
+        }
+
+        function triggerUpload(category) {
+            document.getElementById(`fileInput-${category}`).click();
+        }
+
+        async function handleFileSelect(e, category) {
+            const files = e.target.files;
+            if (!files || files.length === 0) return;
+            for (const file of files) {
+                await uploadSingleFile(file, category);
+            }
+            e.target.value = '';
+            fetchCategoryFiles(category);
+        }
+
+        function uploadSingleFile(file, category) {
+            return new Promise(resolve => {
+                const card = document.getElementById('uploadProgressCard');
+                const nameLabel = document.getElementById('uploadFileName');
+                const totalSizeLabel = document.getElementById('uploadTotalSize');
+                const cancelBtn = document.getElementById('cancelUploadBtn');
+
+                // Stage 1 elements
+                const stage1Bar = document.getElementById('stage1ProgressBar');
+                const stage1Percent = document.getElementById('stage1Percent');
+                const stage1Speed = document.getElementById('stage1Speed');
+                const stage1Details = document.getElementById('stage1Details');
+                const stage1Status = document.getElementById('stage1Status');
+
+                // Stage 2 elements
+                const stage2Dot = document.getElementById('stage2IndicatorDot');
+                const stage2Bar = document.getElementById('stage2ProgressBar');
+                const stage2Percent = document.getElementById('stage2Percent');
+                const stage2Speed = document.getElementById('stage2Speed');
+                const stage2Details = document.getElementById('stage2Details');
+                const stage2Eta = document.getElementById('stage2Eta');
+
+                // Temp Enhancement elements
+                const tempChunkInfo = document.getElementById('tempChunkInfo');
+                const tempDataInfo = document.getElementById('tempDataInfo');
+                const tempThroughput = document.getElementById('tempThroughputInfo');
+                const tempElapsed = document.getElementById('tempElapsedTime');
+                const tempRemaining = document.getElementById('tempEstimatedRemaining');
+                let uploadStartTime = Date.now();
+
+                const totalMB = (file.size / (1024 * 1024)).toFixed(1);
+                const uploadId = (typeof crypto !== 'undefined' && crypto.randomUUID) 
+                    ? crypto.randomUUID() 
+                    : ('up_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
+
+                card.classList.remove('hidden');
+                nameLabel.textContent = file.name;
+                totalSizeLabel.textContent = `${totalMB} MB total`;
+
+                // Reset Stage 1
+                stage1Bar.style.width = '0%';
+                stage1Bar.className = "bg-gradient-to-r from-sky-500 to-blue-500 h-1.5 rounded-full transition-all duration-150";
+                stage1Percent.textContent = '0%';
+                stage1Speed.textContent = '0 MB/s';
+                stage1Details.textContent = `0 MB / ${totalMB} MB`;
+                stage1Status.textContent = 'Uploading...';
+                stage1Status.className = 'font-medium text-sky-500';
+
+                // Reset Stage 2
+                stage2Dot.className = 'w-1.5 h-1.5 rounded-full bg-slate-500 inline-block';
+                stage2Bar.style.width = '0%';
+                stage2Bar.className = "bg-gradient-to-r from-indigo-500 to-purple-500 h-1.5 rounded-full transition-all duration-200";
+                stage2Percent.textContent = '0%';
+                stage2Percent.className = 'font-bold text-slate-400';
+                stage2Speed.textContent = '-- MB/s';
+                stage2Details.textContent = 'Waiting for device upload...';
+                stage2Eta.textContent = '';
+
+                let pollInterval = null;
+                const stopPolling = () => {
+                    if (pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                    }
+                };
+
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('category', category);
+                formData.append('upload_id', uploadId);
+
+                const xhr = new XMLHttpRequest();
+                currentXHR = xhr;
+
+                cancelBtn.onclick = () => {
+                    stopPolling();
+                    xhr.abort();
+                    card.classList.add('hidden');
+                    currentXHR = null;
+                    resolve();
+                };
+
+                // Track Stage 1 upload speed
+                let s1LastTime = Date.now();
+                let s1LastLoaded = 0;
+
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const now = Date.now();
+                        const dt = (now - s1LastTime) / 1000;
+                        if (dt >= 0.3) {
+                            const speedBytesPerSec = (e.loaded - s1LastLoaded) / dt;
+                            const speedMB = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
+                            stage1Speed.textContent = `${speedMB} MB/s`;
+                            s1LastTime = now;
+                            s1LastLoaded = e.loaded;
+                        }
+
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        stage1Bar.style.width = `${percent}%`;
+                        stage1Percent.textContent = `${percent}%`;
+                        const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
+                        stage1Details.textContent = `${loadedMB} MB / ${totalMB} MB`;
+
+                        if (e.loaded >= e.total) {
+                            stage1Status.textContent = 'Received by server ✓';
+                            stage1Status.className = 'font-medium text-emerald-500';
+                            stage1Bar.className = "bg-emerald-500 h-1.5 rounded-full";
+                            
+                            // Activate Stage 2
+                            stage2Dot.className = 'w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block animate-pulse';
+                            stage2Percent.className = 'font-bold text-indigo-400';
+                            stage2Details.textContent = 'Connecting to Telegram...';
+
+                            // Start polling Stage 2 progress from server
+                            if (!pollInterval) {
+                                pollInterval = setInterval(async () => {
+                                    try {
+                                        const res = await fetch(`/api/upload-progress/${uploadId}`);
+                                        const p = await res.json();
+                                        if (p.status === 'starting_telegram_sync') {
+                                            stage2Details.textContent = 'Preparing Telegram upload stream...';
+                                        }
+                                        if (p.status === 'uploading_to_telegram' || p.status === 'completed') {
+                                            stage2Bar.style.width = `${p.percent}%`;
+                                            stage2Percent.textContent = `${p.percent}%`;
+                                            stage2Speed.textContent = `${p.speed_mbs} MB/s`;
+                                            const curMB = (p.current / (1024 * 1024)).toFixed(1);
+                                            const totMB = (p.total / (1024 * 1024)).toFixed(1);
+                                            stage2Details.textContent = `${curMB} MB / ${totMB} MB`;
+                                            if (p.eta_seconds > 0) {
+                                                const mins = Math.floor(p.eta_seconds / 60);
+                                                const secs = p.eta_seconds % 60;
+                                                stage2Eta.textContent = mins > 0 ? `ETA: ${mins}m ${secs}s` : `ETA: ${secs}s`;
+                                            } else {
+                                                stage2Eta.textContent = '';
+                                            }
+
+                                            // [TEMP ENHANCEMENT]: Populate real-time live telemetry
+                                            if (tempElapsed) {
+                                                const elapsedSec = Math.floor((Date.now() - uploadStartTime) / 1000);
+                                                const eMin = Math.floor(elapsedSec / 60);
+                                                const eSec = elapsedSec % 60;
+                                                tempElapsed.textContent = eMin > 0 ? `${eMin}m ${eSec}s` : `${eSec}s`;
+                                            }
+                                            if (p.current && p.total) {
+                                                const chunkNum = Math.floor(p.current / (512 * 1024)) + 1;
+                                                const totalChunks = Math.ceil(p.total / (512 * 1024));
+                                                if (tempChunkInfo) tempChunkInfo.textContent = `Part ${chunkNum} / ${totalChunks}`;
+                                                if (tempDataInfo) {
+                                                    const cMB = (p.current / (1024 * 1024)).toFixed(2);
+                                                    const tMB = (p.total / (1024 * 1024)).toFixed(2);
+                                                    tempDataInfo.textContent = `${cMB} MB / ${tMB} MB`;
+                                                }
+                                                if (tempThroughput) {
+                                                    const kbps = (p.speed_mbs * 1024).toFixed(0);
+                                                    tempThroughput.textContent = `${kbps} KB/s (${p.speed_mbps || (p.speed_mbs * 8).toFixed(2)} Mbps)`;
+                                                }
+                                                if (tempRemaining) {
+                                                    if (p.eta_seconds > 0) {
+                                                        const hrs = Math.floor(p.eta_seconds / 3600);
+                                                        const mins = Math.floor((p.eta_seconds % 3600) / 60);
+                                                        const secs = p.eta_seconds % 60;
+                                                        if (hrs > 0) {
+                                                            tempRemaining.textContent = `Est. Remaining: ~${hrs}h ${mins}m`;
+                                                        } else if (mins > 0) {
+                                                            tempRemaining.textContent = `Est. Remaining: ~${mins}m ${secs}s`;
+                                                        } else {
+                                                            tempRemaining.textContent = `Est. Remaining: ~${secs}s`;
+                                                        }
+                                                    } else {
+                                                        tempRemaining.textContent = 'Est. Remaining: Calculating...';
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (p.status === 'completed') {
+                                            stage2Bar.style.width = '100%';
+                                            stage2Percent.textContent = '100%';
+                                            stage2Details.textContent = 'Saved to Telegram Vault ✓';
+                                            stage2Details.className = 'font-medium text-emerald-500 text-[10px]';
+                                            stage2Bar.className = "bg-emerald-500 h-1.5 rounded-full";
+                                            stage2Dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block';
+                                            stopPolling();
+                                        }
+                                    } catch (err) {
+                                        console.warn('Progress poll error:', err);
+                                    }
+                                }, 350);
+                            }
+                        }
+                    }
+                };
+
+                xhr.onload = () => {
+                    stopPolling();
+                    currentXHR = null;
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        stage2Bar.style.width = '100%';
+                        stage2Percent.textContent = '100%';
+                        stage2Details.textContent = 'Vault sync complete ✓';
+                        stage2Details.className = 'font-medium text-emerald-500 text-[10px]';
+                        stage2Bar.className = "bg-emerald-500 h-1.5 rounded-full";
+                        stage2Dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block';
+                        fetchCategoryFiles(category);
+                        setTimeout(() => {
+                            card.classList.add('hidden');
+                            resolve();
+                        }, 2500);
+                    } else if (xhr.status === 401) {
+                        card.classList.add('hidden');
+                        lockApp();
+                        resolve();
+                    } else {
+                        alert('Upload failed: ' + (xhr.responseText || 'Server error'));
+                        card.classList.add('hidden');
+                        resolve();
+                    }
+                };
+
+                xhr.onerror = () => {
+                    stopPolling();
+                    card.classList.add('hidden');
+                    currentXHR = null;
+                    resolve();
+                };
+
+                xhr.open('POST', `/api/upload?category=${category}`, true);
+                if (isUnlocked) {
+                    xhr.setRequestHeader('X-Auth-Token', 'Allow');
+                }
+                xhr.send(formData);
+            });
+        }
+
+        async function deleteFile(id) {
+            if (!isUnlocked) {
+                pendingTab = currentTab;
+                showLockModal(true);
+                return;
+            }
+            if (!confirm("Delete this item from Telegram storage?")) return;
+            await fetch(`/api/files/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-Auth-Token': 'Allow' }
+            });
+            fetchCategoryFiles(currentTab === 'softwares' ? 'software' : (currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file')));
+        }
+
+        // ==================== SEND TEXT / NOTES ====================
+
+        async function fetchNotes() {
+            try {
+                const res = await fetch('/api/notes', { headers: { 'X-Auth-Token': 'Allow' } });
+                if (res.status === 401) { lockApp(); return; }
+                const data = await res.json();
+                const container = document.getElementById('notesContainer');
+                if (!data.notes || data.notes.length === 0) {
+                    container.innerHTML = `<div class="p-6 text-center text-xs" style="color: var(--text-secondary);">No text notes sent yet.</div>`;
+                    return;
+                }
+                container.innerHTML = data.notes.map(n => `
+                    <div class="p-3 sm:p-3.5 rounded-xl border flex items-start justify-between gap-2.5 sm:gap-3 min-w-0 w-full overflow-hidden shadow-sm" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                        <div class="flex-1 min-w-0 overflow-hidden">
+                            <p class="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed break-words break-all" style="color: var(--text-primary); overflow-wrap: anywhere; word-break: break-word;">${escapeHtml(n.content)}</p>
+                            <div class="flex items-center space-x-2 text-[10px] mt-2 min-w-0 truncate" style="color: var(--text-secondary);">
+                                <span>${new Date(n.created_at).toLocaleString()}</span>
+                                <span>•</span>
+                                <span>Msg #${n.telegram_message_id}</span>
+                            </div>
+                        </div>
+                        <button onclick="deleteNote('${n.id}')" class="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500 shrink-0"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                    </div>
+                `).join('');
+                refreshIcons();
+            } catch (err) {
+                console.error("Notes error:", err);
+            }
+        }
+
+        async function sendNote() {
+            const input = document.getElementById('noteInput');
+            const content = input.value.trim();
+            if (!content) return;
+            await fetch('/api/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': 'Allow' },
+                body: JSON.stringify({ content })
+            });
+            input.value = '';
+            fetchNotes();
+        }
+
+        async function deleteNote(id) {
+            await fetch(`/api/notes/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-Auth-Token': 'Allow' }
+            });
+            fetchNotes();
+        }
+
+        // ==================== TO-DO LIST ====================
+
+        async function fetchTodos() {
+            try {
+                const res = await fetch(`/api/todos?status=${currentTodoFilter}`, {
+                    headers: { 'X-Auth-Token': 'Allow' }
+                });
+                if (res.status === 401) { lockApp(); return; }
+                const data = await res.json();
+                const container = document.getElementById('todosContainer');
+
+                const activeCount = data.todos.filter(t => !t.completed).length;
+                const dBadge = document.getElementById('todoActiveBadge-desktop');
+                const mBadge = document.getElementById('todoActiveBadge-mobile');
+                if (activeCount > 0) {
+                    if (dBadge) { dBadge.textContent = activeCount; dBadge.classList.remove('hidden'); }
+                    if (mBadge) mBadge.classList.remove('hidden');
+                } else {
+                    if (dBadge) dBadge.classList.add('hidden');
+                    if (mBadge) mBadge.classList.add('hidden');
+                }
+
+                if (!data.todos || data.todos.length === 0) {
+                    container.innerHTML = `<div class="p-8 text-center text-xs" style="color: var(--text-secondary);">No tasks found.</div>`;
+                    return;
+                }
+
+                container.innerHTML = data.todos.map(t => `
+                    <div class="p-3 sm:p-3.5 flex items-center justify-between gap-2 sm:gap-3 hover:bg-[var(--item-hover)] transition min-w-0 w-full overflow-hidden border-b last:border-b-0 ${t.completed ? 'opacity-60 bg-[var(--subtle-bg)]/40' : ''}" style="border-color: var(--border-divider);">
+                        <div class="flex items-center space-x-2.5 sm:space-x-3 min-w-0 flex-1 overflow-hidden">
+                            <input type="checkbox" ${t.completed ? 'checked' : ''} onchange="toggleTodo('${t.id}', this.checked)" class="w-4 h-4 sm:w-5 sm:h-5 rounded text-sky-500 focus:ring-0 focus:ring-offset-0 cursor-pointer shrink-0" style="background-color: var(--input-bg); border-color: var(--input-border);">
+                            <span class="text-xs sm:text-sm ${t.completed ? 'line-through font-normal' : 'font-medium'} truncate flex-1 min-w-0" style="color: ${t.completed ? 'var(--text-secondary)' : 'var(--text-primary)'};">${escapeHtml(t.title)}</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+                            <span class="text-[10px] font-mono hidden sm:inline" style="color: var(--text-secondary);">Msg #${t.telegram_message_id}</span>
+                            <button onclick="deleteTodo('${t.id}')" class="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500" title="Delete Task"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                        </div>
+                    </div>
+                `).join('');
+                refreshIcons();
+            } catch (err) {
+                console.error("Todos error:", err);
+            }
+        }
+
+        async function createTodo() {
+            const input = document.getElementById('todoInput');
+            const title = input.value.trim();
+            if (!title) return;
+            await fetch('/api/todos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': 'Allow' },
+                body: JSON.stringify({ title })
+            });
+            input.value = '';
+            fetchTodos();
+        }
+
+        async function toggleTodo(id, completed) {
+            await fetch(`/api/todos/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': 'Allow' },
+                body: JSON.stringify({ completed })
+            });
+            fetchTodos();
+        }
+
+        async function deleteTodo(id) {
+            await fetch(`/api/todos/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-Auth-Token': 'Allow' }
+            });
+            fetchTodos();
+        }
+
+        async function clearCompletedTodos() {
+            if (!confirm("Clear all completed tasks? They will be removed from your list and Telegram.")) return;
+            await fetch('/api/todos/clear-completed', {
+                method: 'POST',
+                headers: { 'X-Auth-Token': 'Allow' }
+            });
+            fetchTodos();
+        }
+
+        function filterTodos(filter) {
+            currentTodoFilter = filter;
+            ['all', 'active', 'completed'].forEach(f => {
+                const btn = document.getElementById(`todoFilter-${f}`);
+                if (f === filter) {
+                    btn.className = "px-2.5 py-1 rounded-lg font-medium shadow-sm transition";
+                    btn.style.backgroundColor = "var(--subtle-bg)";
+                    btn.style.color = "var(--text-primary)";
+                } else {
+                    btn.className = "px-2.5 py-1 rounded-lg font-medium transition hover:opacity-80";
+                    btn.style.backgroundColor = "transparent";
+                    btn.style.color = "var(--text-secondary)";
+                }
+            });
+            fetchTodos();
+        }
+
+        // ==================== SYNC TELEGRAM ====================
+
+        async function syncTelegram() {
+            const icon = document.getElementById('syncIcon');
+            if (icon) icon.classList.add('animate-spin');
+            try {
+                const res = await fetch('/api/sync', {
+                    method: 'POST',
+                    headers: { 'X-Auth-Token': 'Allow' }
+                });
+                const data = await res.json();
+                alert(`Sync Complete! Found and imported ${data.imported_files} file(s) from your Telegram channel.`);
+                if (currentTab === 'files' || currentTab === 'photos' || currentTab === 'videos') {
+                    fetchCategoryFiles(currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file'));
+                }
+            } catch (err) {
+                alert('Sync failed: ' + err.message);
+            } finally {
+                if (icon) icon.classList.remove('animate-spin');
+            }
+        }
+
+        // ==================== UTILITIES ====================
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                const dot = document.getElementById('statusDot');
+                const text = document.getElementById('statusText');
+                if (!data.is_demo) {
+                    dot.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0";
+                    text.textContent = data.bot_username ? `@${data.bot_username}` : "Live";
+                } else {
+                    dot.className = "w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0";
+                    text.textContent = "Demo Mode";
+                }
+            } catch (err) {}
+        }
+
+        function openLightbox(src, caption, fileId = null, fileSize = 0) {
+            document.getElementById('lightboxImg').src = src;
+            document.getElementById('lightboxCaption').textContent = caption;
+            const dlBtn = document.getElementById('lightboxDownloadBtn');
+            if (dlBtn && fileId) {
+                dlBtn.setAttribute('data-id', fileId);
+                dlBtn.setAttribute('data-name', caption);
+                dlBtn.setAttribute('data-size', fileSize || 0);
+                dlBtn.onclick = function() { handleDownloadClick(this, false); };
+                dlBtn.classList.remove('hidden');
+            } else if (dlBtn) {
+                dlBtn.classList.add('hidden');
+            }
+            document.getElementById('lightboxModal').classList.remove('hidden');
+            refreshIcons();
+        }
+        function closeLightbox() {
+            document.getElementById('lightboxModal').classList.add('hidden');
+        }
+
+        function toggleConfigModal(show) {
+            document.getElementById('configModal').classList.toggle('hidden', !show);
+        }
+
+        function escapeHtml(text) {
+            const map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
+            return (text || '').replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // Start Auth Check
+        checkAuth();
+    </script>
+</body>
+</html>

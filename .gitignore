@@ -1,0 +1,30 @@
+# Environment & Secrets
+.env
+*.env.*
+
+# Telegram MTProto session files
+*.session
+*.session-journal
+
+# Python caches & virtual environment
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+
+# Uploads & local storage
+uploads_temp/
+demo_storage/
+*.db
+*.sqlite3
+
+# Test artifacts
+test_cloud_storage.db
+.pytest_cache/
+
+# Logs and SSL certificates
+logs/
+*.log
+*.pem
+
