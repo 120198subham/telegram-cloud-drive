@@ -172,6 +172,7 @@ async def auth_middleware(request: Request, call_next):
             "/api/auth/cancel-otp",
             "/api/auth/status",
             "/api/auth/verify",
+            "/api/auth/logout",
             "/api/status",
             "/api/prefetch",
         ]
@@ -551,6 +552,12 @@ async def verify_password(payload: AuthRequest, request: Request, response: Resp
             "message": "Authenticated successfully."
         }
     raise HTTPException(status_code=401, detail="Incorrect password.")
+
+@app.post("/api/auth/logout")
+async def logout_endpoint(response: Response):
+    """Terminate active authentication cookie session."""
+    response.delete_cookie(key="tg_auth", httponly=True, samesite="lax")
+    return {"success": True, "message": "Logged out successfully."}
 
 @app.get("/api/status")
 async def get_system_status():

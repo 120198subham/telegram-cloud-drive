@@ -1233,6 +1233,7 @@
             localStorage.removeItem('tg_auth');
             localStorage.removeItem('session_token');
             document.cookie = "tg_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
             updateLockStateUI(false);
             activateTab('softwares');
         }

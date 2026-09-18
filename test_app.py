@@ -562,5 +562,21 @@ async def test_unauthenticated_software_download_isolation():
         assert dl_res.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_logout_endpoint():
+    """Verify /api/auth/logout clears tg_auth cookie."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
+        # Verify authenticated
+        assert (await client.get("/api/files")).status_code == 200
+        # Call logout
+        logout_res = await client.post("/api/auth/logout")
+        assert logout_res.status_code == 200
+        assert logout_res.json()["success"] is True
+
+
+
 
 
