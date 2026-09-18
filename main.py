@@ -480,12 +480,20 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon():
+    favicon_svg = STATIC_DIR / "favicon.svg"
+    if favicon_svg.exists():
+        return FileResponse(favicon_svg, media_type="image/svg+xml")
+    return Response(status_code=204)
+
 @app.get("/")
 async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
     return {"message": "Telegram Cloud Hub is running."}
+
 
 if __name__ == "__main__":
     import uvicorn
