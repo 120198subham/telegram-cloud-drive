@@ -318,16 +318,26 @@ async def auto_prefetch(force: bool = False) -> int:
 # ==================== AUTH & STATUS ====================
 
 @app.get("/api/auth/status")
-async def get_auth_status(request: Request, tab: Optional[str] = None):
-    """Retrieve lockout and OTP countdown only — no sensitive session metadata exposed."""
+async def get_auth_status(request: Request, tab: Optional[str] = None, session_id: Optional[str] = None):
+    """Retrieve lockout and OTP countdown only — strictly scoped to session_id or requested tab."""
     ip = get_client_ip(request)
     is_locked, remaining_lockout = await check_ip_lockout(ip)
-    active_otp = await get_active_otp_session(ip)
+    
+    active_otp = None
+    if session_id:
+        active_otp = await get_otp_session_by_id(session_id.strip())
+        if active_otp and active_otp.get("ip") != ip:
+            active_otp = None
+    elif tab:
+        active_otp = await get_active_otp_session(ip, tab=tab.strip())
+    else:
+        active_otp = await get_active_otp_session(ip)
+
     remaining_otp = 0
     active_tab = None
     cross_tab = False
 
-    if active_otp:
+    if active_otp and not active_otp.get("used") and not active_otp.get("cancelled"):
         now_dt = datetime.now(timezone.utc)
         exp_dt = datetime.fromisoformat(active_otp["expires_at"])
         remaining_otp = max(0, int((exp_dt - now_dt).total_seconds()))
