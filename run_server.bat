@@ -20,13 +20,6 @@ cd /d "%APP_DIR%"
 timeout /t 3 /nobreak >nul
 
 :: ----------------------------------------------------------
-:: Update deSEC Dynamic DNS (IPv4 + IPv6)
-:: ----------------------------------------------------------
-echo [%DATE% %TIME%] Syncing deSEC DynDNS... >> "%LOG_FILE%"
-curl.exe -s -4 -u "ssworkspace.dedyn.io:eWQBJf6m86vEEj6smbHmFNzKq1M2" "https://update.dedyn.io/?myipv4=auto" >> "%LOG_FILE%" 2>&1
-curl.exe -s -6 -u "ssworkspace.dedyn.io:eWQBJf6m86vEEj6smbHmFNzKq1M2" "https://update.dedyn.io/?myipv6=auto" >> "%LOG_FILE%" 2>&1
-
-:: ----------------------------------------------------------
 :: Launch Uvicorn backend (stdout + stderr sent to log file)
 :: ----------------------------------------------------------
 echo [%DATE% %TIME%] Starting SS Workspace backend... >> "%LOG_FILE%"
