@@ -60,6 +60,7 @@ from database import (
     mark_otp_session_used,
     hash_otp_code,
     get_otp_session_by_id,
+    cleanup_expired_otp_sessions,
 )
 from telegram_client import storage_client
 
@@ -106,13 +107,28 @@ def get_client_ip(request: Request) -> str:
             return ips[0]
     return request.client.host if request.client else "127.0.0.1"
 
+async def periodic_otp_cleanup():
+    """Background task running every 30 minutes to purge expired OTP sessions."""
+    while True:
+        try:
+            await asyncio.sleep(1800)
+            await cleanup_expired_otp_sessions()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            pass
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Purge any stale expired OTP sessions at startup
+    await cleanup_expired_otp_sessions()
+    cleanup_task = asyncio.create_task(periodic_otp_cleanup())
     await storage_client.initialize()
     # Auto-import any existing channel files in background so server binds immediately
     asyncio.create_task(storage_client.sync_channel_messages())
     yield
+    cleanup_task.cancel()
     await storage_client.close()
 
 # Initialize FastAPI app
@@ -815,6 +831,10 @@ async def list_todos(status: Optional[str] = Query(None, description="Status fil
 @app.post("/api/todos")
 async def create_todo(payload: TodoCreate):
     """Create a new todo task, send to Telegram Channel 2, and save to DB."""
+    existing_todos = await get_todos()
+    if len(existing_todos) >= 1000:
+        raise HTTPException(status_code=400, detail="Maximum todo limit reached (1000 items).")
+
     clean_title = payload.title.strip()
     if not clean_title:
         raise HTTPException(status_code=400, detail="Task title cannot be empty.")
@@ -883,6 +903,10 @@ async def list_notes():
 @app.post("/api/notes")
 async def create_note(payload: NoteCreate):
     """Send text note to Telegram Channel 2 and save to DB."""
+    existing_notes = await get_notes()
+    if len(existing_notes) >= 1000:
+        raise HTTPException(status_code=400, detail="Maximum note limit reached (1000 items).")
+
     clean_content = payload.content.strip()
     if not clean_content:
         raise HTTPException(status_code=400, detail="Note content cannot be empty.")

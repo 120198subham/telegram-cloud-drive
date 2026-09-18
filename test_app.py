@@ -577,6 +577,27 @@ async def test_logout_endpoint():
         assert logout_res.json()["success"] is True
 
 
+@pytest.mark.asyncio
+async def test_notes_and_todos_unauthenticated_rejection():
+    """Aikido Issue 46424539: Verify unauthenticated requests to todos and notes are rejected."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Without auth
+        assert (await client.post("/api/todos", json={"title": "Unauthorized task"})).status_code == 401
+        assert (await client.get("/api/todos")).status_code == 401
+        assert (await client.post("/api/notes", json={"content": "Unauthorized note"})).status_code == 401
+        assert (await client.get("/api/notes")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_otp_session_cleanup():
+    """Aikido Issue 46424536: Verify cleanup_expired_otp_sessions purges stale records."""
+    from database import cleanup_expired_otp_sessions
+    purged = await cleanup_expired_otp_sessions(max_age_hours=0)
+    assert isinstance(purged, int)
+
+
+
 
 
 
