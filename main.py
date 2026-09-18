@@ -92,20 +92,25 @@ def verify_signed_session_token(token: str) -> bool:
     expected_sig = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected_sig)
 
+TRUSTED_PROXIES = {"127.0.0.1", "::1", "localhost"}
+
 def get_client_ip(request: Request) -> str:
     """Extract client IP address safely without trusting unverified spoofed forward headers."""
-    cf_ip = request.headers.get("CF-Connecting-IP")
-    if cf_ip:
-        return cf_ip.strip()
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        ips = [x.strip() for x in forwarded.split(",") if x.strip()]
-        if ips:
-            return ips[0]
-    return request.client.host if request.client else "127.0.0.1"
+    peer = request.client.host if request.client else "127.0.0.1"
+    # Only trust forwarding headers if the direct socket connection is from a recognized local proxy
+    if peer in TRUSTED_PROXIES:
+        cf_ip = request.headers.get("CF-Connecting-IP")
+        if cf_ip:
+            return cf_ip.strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            ips = [x.strip() for x in forwarded.split(",") if x.strip()]
+            if ips:
+                return ips[0]
+    return peer
 
 async def periodic_otp_cleanup():
     """Background task running every 30 minutes to purge expired OTP sessions."""
@@ -155,12 +160,12 @@ async def security_headers_middleware(request: Request, call_next):
     # Content-Security-Policy declaration for scripts, styles, images, media, and fonts
     csp_directives = [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com",
-        "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
         "media-src 'self' blob: data:",
         "font-src 'self' data: https:",
-        "connect-src 'self' https://cdn.tailwindcss.com",
+        "connect-src 'self'",
         "frame-ancestors 'none'",
         "object-src 'none'",
         "base-uri 'self'",
@@ -267,13 +272,17 @@ _PREFETCH_IP_COOLDOWN = 30.0
 _PREFETCH_IP_MAX = 500  # max tracked IPs before evicting oldest
 
 async def auto_prefetch(force: bool = False) -> int:
-    """Debounced prefetch of latest files from Telegram channels."""
+    """Debounced prefetch of latest files from Telegram channels with mandatory server-side cooldown."""
     global _last_prefetch_time
+    # Non-blocking lock check: if a sync is already running, exit immediately without queuing waiters
+    if _prefetch_lock.locked():
+        return 0
     now = time.time()
-    if not force and (now - _last_prefetch_time < 5.0):
+    # Mandatory server-side cooldown of 5.0 seconds applied globally to prevent workload flooding
+    if now - _last_prefetch_time < 5.0:
         return 0
     async with _prefetch_lock:
-        if not force and (time.time() - _last_prefetch_time < 5.0):
+        if time.time() - _last_prefetch_time < 5.0:
             return 0
         _last_prefetch_time = time.time()
         try:
@@ -589,8 +598,18 @@ async def get_system_status():
 @app.get("/api/prefetch")
 @app.post("/api/prefetch")
 async def prefetch_files(request: Request, force: bool = Query(False)):
-    """Trigger a debounced prefetch of files from Telegram channels (rate-limited per IP)."""
+    """Trigger a debounced prefetch of files from Telegram channels."""
+    if _prefetch_lock.locked():
+        return {"success": True, "imported_files": 0, "status": "sync_in_progress"}
+
     if force:
+        # Require authenticated session for forced synchronization
+        cookie_auth = request.cookies.get("tg_auth", "")
+        header_auth = request.headers.get("X-Session-Token", "")
+        token = cookie_auth or header_auth
+        if not token or not verify_signed_session_token(token):
+            raise HTTPException(status_code=401, detail="Authentication required for forced channel synchronization.")
+
         ip = get_client_ip(request)
         now = time.time()
         last = _prefetch_ip_timestamps.get(ip, 0.0)
@@ -601,6 +620,7 @@ async def prefetch_files(request: Request, force: bool = Query(False)):
             oldest_ip = min(_prefetch_ip_timestamps, key=_prefetch_ip_timestamps.get)
             del _prefetch_ip_timestamps[oldest_ip]
         _prefetch_ip_timestamps[ip] = now
+
     imported = await auto_prefetch(force=force)
     return {"success": True, "imported_files": imported}
 

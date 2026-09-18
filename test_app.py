@@ -448,10 +448,8 @@ async def test_security_headers_and_csp():
 
         csp = resp.headers["Content-Security-Policy"]
         assert "default-src 'self'" in csp
-        assert "script-src" in csp
-        assert "https://cdn.tailwindcss.com" in csp
-        assert "https://unpkg.com" in csp
-        assert "style-src" in csp
+        assert "script-src 'self'" in csp
+        assert "style-src 'self'" in csp
         assert "frame-ancestors 'none'" in csp
         assert "object-src 'none'" in csp
         assert "base-uri 'self'" in csp
@@ -464,10 +462,14 @@ async def test_security_headers_and_csp():
         assert "geolocation=()" in resp.headers.get("Permissions-Policy", "")
         assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
 
-        # Verify self-hosted Lucide icon script (SRI fix)
+        # Verify self-hosted scripts (Aikido unpinned 3rd party script fix)
         lucide_resp = await client.get("/static/lucide.min.js")
         assert lucide_resp.status_code == 200
         assert len(lucide_resp.content) > 100000
+
+        tailwind_resp = await client.get("/static/tailwind.min.js")
+        assert tailwind_resp.status_code == 200
+        assert len(tailwind_resp.content) > 100000
 
         # Test API endpoint also receives CSP, HSTS, and security headers
         api_resp = await client.get("/api/status")
@@ -595,6 +597,25 @@ async def test_otp_session_cleanup():
     from database import cleanup_expired_otp_sessions
     purged = await cleanup_expired_otp_sessions(max_age_hours=0)
     assert isinstance(purged, int)
+
+
+@pytest.mark.asyncio
+async def test_forced_prefetch_requires_authentication():
+    """Aikido Issue 46424534 Subissue 1.1: Verify forced prefetch requires authentication."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Unauthenticated call with force=true should be rejected with 401
+        res = await client.get("/api/prefetch?force=true")
+        assert res.status_code == 401
+        assert "Authentication required" in res.json()["detail"]
+
+        # Authenticated call with force=true should succeed
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
+        res_auth = await client.get("/api/prefetch?force=true")
+        assert res_auth.status_code == 200
+        assert res_auth.json()["success"] is True
+
 
 
 

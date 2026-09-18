@@ -442,11 +442,18 @@ class TelegramStorageClient:
         icon = "💻" if category == "software" else ("🖼️" if category == "photo" else ("🎬" if category == "video" else "📁"))
         caption = f"{icon} **{category.title()}:** `{filename}`\n💾 **Size:** {os.path.getsize(file_path):,} bytes"
 
-        # Determine target entity
+        # Determine target entity and destination channel ID
         target_entity = self.channel_entity
+        target_channel_id = CHANNEL_ID
         if category == "software" and SOFTWARE_CHANNEL_ID != 0:
             soft_entity = await self.get_software_entity()
-            target_entity = soft_entity or self.channel_entity
+            if soft_entity:
+                target_entity = soft_entity
+                target_channel_id = SOFTWARE_CHANNEL_ID
+            else:
+                logger.warning("Software channel entity could not be resolved; routing upload to primary storage channel.")
+                target_entity = self.channel_entity
+                target_channel_id = CHANNEL_ID
 
         file_size = os.path.getsize(file_path)
         is_big = file_size > 10 * 1024 * 1024
@@ -691,10 +698,17 @@ class TelegramStorageClient:
 
         if channel_id == SOFTWARE_CHANNEL_ID and SOFTWARE_CHANNEL_ID != 0:
             soft_entity = await self.get_software_entity()
-            entity = soft_entity or self.channel_entity
+            if not soft_entity:
+                logger.error(f"Cannot delete message {message_id}: software channel entity could not be resolved. Failing closed to prevent accidental cross-channel deletion.")
+                return False
+            entity = soft_entity
         elif channel_id == TODO_CHANNEL_ID and TODO_CHANNEL_ID != 0:
+            if not self.todo_channel_entity and not self.channel_entity:
+                return False
             entity = self.todo_channel_entity or self.channel_entity
         else:
+            if not self.channel_entity:
+                return False
             entity = self.channel_entity
 
         try:
