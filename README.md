@@ -19,7 +19,7 @@ Uploads are directly dispatched as documents in a private Telegram channel, with
   - **Context-Aware**: The alert specifies the requested Tab and Action (e.g. `Action: 🗑️ Removing Item: setup.exe`).
   - **Per-Tab Isolation**: Switching tabs automatically cancels pending OTPs and immediately purges the Telegram message.
   - **Auto-Purge**: Telegram messages auto-delete after 3 minutes.
-- **Option 3 Brute-Force Defense & IP Lockout** — 5 failed OTP attempts trigger an immediate 10-minute IP lockout and an urgent security alert dispatched to Telegram.
+- **Brute-Force Defense & IP Lockout** — 5 failed OTP attempts trigger an immediate 10-minute IP lockout and an urgent security alert dispatched to Telegram.
 - **Real-Time Upload Progress** — Live per-upload telemetry: stage, percent, MB/s, Mbps, ETA — polled every 500 ms via `/api/upload-progress/{id}`.
 - **Auto-Sync on Startup** — Scans all Telegram channels at boot and imports any existing documents into the local SQLite catalog automatically.
 - **cryptg AES-NI Acceleration** — C-extension replacing pyaes, delivering ~400× faster MTProto encryption/decryption.
