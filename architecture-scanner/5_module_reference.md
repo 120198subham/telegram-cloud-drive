@@ -200,33 +200,40 @@ A complete single-page application (SPA) written in plain HTML5 + CSS + JavaScri
 
 ## 6. `requirements.txt` — Python Dependencies
 
-| Package | What It Does |
-| :--- | :--- |
-| `fastapi` | The web framework — handles routes, middleware, responses |
-| `uvicorn` | ASGI server — runs FastAPI and handles HTTP connections |
-| `telethon` | Telegram MTProto client — the protocol engine for talking to Telegram |
-| `aiosqlite` | Async SQLite — read/write the local catalog without blocking |
-| `python-dotenv` | Loads `.env` file into environment variables |
-| `cryptg` | C extension that accelerates Telethon's AES encryption ~400x faster than pure Python |
-| `python-multipart` | Required by FastAPI to accept file uploads via multipart forms |
+| Package | Version | What It Does |
+| :--- | :--- | :--- |
+| `fastapi` | `>=0.110.0` | The modern, fast web framework — handles routes, middleware, responses |
+| `starlette` | `>=1.0.1` | Underlying ASGI toolkit providing routing, requests, responses, and middleware |
+| `uvicorn[standard]` | `>=0.28.0` | Production lightning-fast ASGI server with cythonized uvloop & httptools |
+| `telethon` | `>=1.34.0` | Telegram MTProto client — protocol engine for talking to Telegram channels |
+| `python-multipart` | `>=0.0.21` | Streaming multipart form-data parser required by FastAPI for uploads |
+| `aiosqlite` | `>=0.20.0` | Async SQLite library — non-blocking local catalog read/write queries |
+| `python-dotenv` | `>=1.0.1` | Loads configuration from `.env` file into system environment variables |
+| `aiofiles` | `>=23.2.1` | Asynchronous file I/O operations for non-blocking disk writes |
+| `requests` | `>=2.31.0` | Synchronous HTTP library for external web services and helper requests |
+| `httpx` | `>=0.27.0` | Next-generation async HTTP client used for ASGI testing with `ASGITransport` |
+| `pytest` | `>=8.0.0` | Comprehensive Python automated testing framework |
+| `pytest-asyncio` | `>=0.23.0` | Pytest plugin for testing async/await coroutines and FastAPI endpoints |
+| `cryptg` | `>=0.6.0` | C extension accelerating Telethon's AES-IGE encryption ~400x faster |
 
 ---
 
 ## 7. `run_server.bat` — Local Startup Script (Windows)
 
 **What it does:**  
-A Windows batch script that starts the server locally. It:
+A hardened Windows batch script that starts the server locally. It:
 1. Activates the Python virtual environment.
-2. Runs `uvicorn main:app --host 0.0.0.0 --port 8000`.
+2. Performs bounded log rotation if `server.log` exceeds 10MB to prevent disk exhaustion DoS.
+3. Runs `uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log` strictly bound to localhost to prevent plaintext network interface exposure.
 
 Called by `launch_silent.vbs` which runs it invisibly in the background so no terminal window stays open.
 
 ---
 
-## 8. `test_app.py` — Automated Tests
+## 8. `test_app.py` — Automated Tests (13/13 Passing)
 
 **What it does:**  
-Uses `pytest` and `httpx.AsyncClient` to test all API routes, parallel MTProto engines, and dynamic OTP lifecycle in isolated Demo Mode without requiring real Telegram credentials.
+Uses `pytest` and `httpx.AsyncClient` with `ASGITransport` to test all API routes, parallel MTProto engines, dynamic OTP lifecycle, and Aikido security protections in isolated Demo Mode without requiring real Telegram credentials.
 
 | Test | What It Verifies |
 | :--- | :--- |
@@ -237,4 +244,9 @@ Uses `pytest` and `httpx.AsyncClient` to test all API routes, parallel MTProto e
 | `test_telegram_otp_rate_limit` | Enforces max 4 OTP requests/minute rate-limiting protection |
 | `test_telegram_otp_option3_lockout_after_5_failures` | Verifies Option 3 defense: 5 failed attempts trigger a 10-minute lockout and Telegram alert |
 | `test_telegram_otp_cross_tab_cancellation` | Verifies per-tab OTP binding, cross-tab verification rejection, and session invalidation |
-| `test_telegram_otp_explicit_cancel` | Verifies `/api/auth/cancel-otp` cancels active session and enables fresh unique OTP |
+| `test_telegram_otp_explicit_cancel` | Verifies `/api/auth/cancel-otp` requires session_id (rejects DoS attempts) and enables fresh OTP |
+| `test_security_headers_and_csp` | Verifies HSTS, CSP, X-Frame-Options, X-Content-Type-Options headers |
+| `test_demo_mode_does_not_disclose_otp` | Verifies demo OTP is logged to server console only, never returned in JSON response |
+| `test_hmac_session_cookie_integrity` | Verifies HMAC-SHA256 session token signature validation and tamper rejection |
+| `test_upload_path_traversal_prevention` | Verifies directory traversal attempts in file uploads are rejected with 400 |
+| `test_unauthenticated_software_download_isolation` | Verifies software channel isolation and unauthenticated access restrictions |

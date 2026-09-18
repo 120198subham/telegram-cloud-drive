@@ -509,6 +509,10 @@ async def create_otp_session(
     expires_at = (now + timedelta(seconds=expiry_seconds)).isoformat()
 
     async with aiosqlite.connect(DB_PATH) as db:
+        # Prune old expired or used sessions older than 1 hour to prevent unbounded SQLite table retention
+        purge_cutoff = (now - timedelta(hours=1)).isoformat()
+        await db.execute("DELETE FROM otp_sessions WHERE created_at < ?", (purge_cutoff,))
+
         # Invalidate previous unused OTP sessions for this IP as cancelled
         await db.execute("UPDATE otp_sessions SET used = 1, cancelled = 1 WHERE ip = ? AND used = 0", (ip,))
         await db.execute("""
@@ -528,21 +532,34 @@ async def create_otp_session(
         "target_name": target_name
     }
 
+async def cleanup_expired_otp_sessions(max_age_hours: int = 1) -> int:
+    """Purge expired, used, and cancelled OTP sessions to prevent unbounded SQLite growth."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM otp_sessions WHERE created_at < ?", (cutoff,))
+        await db.commit()
+        return cursor.rowcount
+
 async def cancel_otp_sessions(ip: Optional[str] = None, tab: Optional[str] = None, session_id: Optional[str] = None) -> int:
     """
-    Explicitly cancels/invalidates active unused OTP sessions.
-    Supports session_id verification to prevent unauthenticated IP spoofing attacks.
+    Cancels/invalidates active unused OTP sessions.
+    External endpoint enforces session_id; internal logic can invalidate by session_id or IP.
     """
     async with aiosqlite.connect(DB_PATH) as db:
-        if session_id:
+        if session_id and ip:
+            cursor = await db.execute("""
+                UPDATE otp_sessions SET cancelled = 1, used = 1
+                WHERE id = ? AND ip = ? AND used = 0
+            """, (session_id, ip))
+        elif session_id:
             cursor = await db.execute("""
                 UPDATE otp_sessions SET cancelled = 1, used = 1
                 WHERE id = ? AND used = 0
             """, (session_id,))
-        elif tab and ip:
+        elif ip and tab:
             cursor = await db.execute("""
                 UPDATE otp_sessions SET cancelled = 1, used = 1
-                WHERE ip = ? AND used = 0 AND LOWER(tab) = LOWER(?)
+                WHERE ip = ? AND LOWER(tab) = LOWER(?) AND used = 0
             """, (ip, tab))
         elif ip:
             cursor = await db.execute("""

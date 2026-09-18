@@ -409,9 +409,16 @@ async def test_telegram_otp_explicit_cancel(monkeypatch):
         res1 = await client.post("/api/auth/send-otp", json={"tab": "Videos Vault"})
         assert res1.status_code == 200
         first_code = captured_code
+        session_id = res1.json().get("session_id")
+        assert session_id is not None
 
-        # 2. User switches tab / closes modal -> triggers cancel-otp
-        cancel_res = await client.post("/api/auth/cancel-otp", json={"tab": "Videos Vault"})
+        # 2a. Attempting to cancel without session_id is rejected (prevents IP-scoped DoS)
+        no_session_cancel = await client.post("/api/auth/cancel-otp", json={"tab": "Videos Vault"})
+        assert no_session_cancel.status_code == 400
+        assert "Session ID is required" in no_session_cancel.json()["detail"]
+
+        # 2b. User switches tab / closes modal -> triggers cancel-otp with session_id
+        cancel_res = await client.post("/api/auth/cancel-otp", json={"tab": "Videos Vault", "session_id": session_id})
         assert cancel_res.status_code == 200
 
         # 3. Old code cannot be verified anymore

@@ -145,8 +145,8 @@ telegram-cloud-drive/
 ├── requirements.txt               # Dependencies (fastapi, telethon, cryptg, pytest, ...)
 ├── .env.example                   # Clean template for Telegram API credentials
 ├── .gitignore                     # Excludes .env, *.session, db, logs
-├── test_app.py                    # pytest automated test suite (8 tests)
-├── run_server.bat                 # Windows local startup script
+├── test_app.py                    # pytest automated test suite (13/13 tests passing)
+├── run_server.bat                 # Windows local startup script (hardened 127.0.0.1)
 ├── launch_silent.vbs              # Background launcher (no terminal window)
 ├── static/
 │   ├── index.html                 # Single-page app (Tailwind CSS + Vanilla JS)
@@ -174,7 +174,7 @@ Run the test suite with `pytest`:
 .\venv\Scripts\python.exe -m pytest test_app.py -v
 ```
 
-All 8 automated tests run with full isolation in Demo Mode:
+All 13 automated tests run with full isolation in Demo Mode:
 - `test_full_workspace_api` — Verifies status, file upload, database indexing, and retrieval.
 - `test_fast_upload_file_parallel` — Verifies 6-worker parallel file chunking and uploads.
 - `test_fast_download_stream_parallel` — Verifies sliding-window parallel streaming engine.
@@ -182,7 +182,12 @@ All 8 automated tests run with full isolation in Demo Mode:
 - `test_telegram_otp_rate_limit` — Verifies 4 requests/min rate limit protection.
 - `test_telegram_otp_option3_lockout_after_5_failures` — Verifies 5-failure brute force 10-minute lockout.
 - `test_telegram_otp_cross_tab_cancellation` — Verifies cross-tab rejection and session invalidation.
-- `test_telegram_otp_explicit_cancel` — Verifies explicit cancel and instant Telegram message purge.
+- `test_telegram_otp_explicit_cancel` — Verifies session_id verification and cancellation DoS defense.
+- `test_security_headers_and_csp` — Verifies HSTS, CSP, X-Frame-Options, X-Content-Type-Options headers.
+- `test_demo_mode_does_not_disclose_otp` — Verifies demo OTP is logged to server console only.
+- `test_hmac_session_cookie_integrity` — Verifies HMAC-SHA256 session token signature validation.
+- `test_upload_path_traversal_prevention` — Verifies directory traversal attempts are blocked.
+- `test_unauthenticated_software_download_isolation` — Verifies public software isolation.
 
 ---
 

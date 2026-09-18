@@ -16,15 +16,23 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 :: Move to app directory
 cd /d "%APP_DIR%"
 
+:: Bounded log rotation: if server.log exceeds 10MB, rotate to .old to prevent disk exhaustion DoS
+if exist "%LOG_FILE%" (
+    for %%I in ("%LOG_FILE%") do (
+        if %%~zI gtr 10485760 (
+            del /f /q "%LOG_FILE%.old" >nul 2>&1
+            move /y "%LOG_FILE%" "%LOG_FILE%.old" >nul 2>&1
+        )
+    )
+)
+
 :: Wait 3 seconds for network interfaces to stabilize on login
 ping 127.0.0.1 -n 4 >nul
 
 :: ----------------------------------------------------------
-:: Launch Uvicorn backend (stdout + stderr sent to log file)
+:: Launch Uvicorn backend bound strictly to localhost (127.0.0.1)
+:: with --no-access-log to prevent disk exhaustion
 :: ----------------------------------------------------------
 echo [%DATE% %TIME%] Starting SS Workspace backend... >> "%LOG_FILE%"
 set PYTHONUNBUFFERED=1
-"%PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 8000 >> "%LOG_FILE%" 2>&1
-
-
-
+"%PYTHON%" -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log >> "%LOG_FILE%" 2>&1

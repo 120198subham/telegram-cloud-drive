@@ -296,11 +296,25 @@ async def get_auth_status(request: Request, tab: Optional[str] = None):
         "is_demo": storage_client.is_demo,
     }
 
+# Concurrency lock per IP to prevent concurrent OTP request bypass / flooding
+_otp_ip_locks: Dict[str, asyncio.Lock] = {}
+_otp_locks_guard = asyncio.Lock()
+
+async def get_ip_otp_lock(ip: str) -> asyncio.Lock:
+    """Retrieve or initialize an async mutex per client IP for atomic OTP operations."""
+    async with _otp_locks_guard:
+        if ip not in _otp_ip_locks:
+            if len(_otp_ip_locks) > 1000:
+                _otp_ip_locks.clear()
+            _otp_ip_locks[ip] = asyncio.Lock()
+        return _otp_ip_locks[ip]
+
 @app.post("/api/auth/send-otp")
 async def send_otp(request: Request, payload: Optional[OtpSendRequest] = None):
     """
     Generate and dispatch a 6-digit OTP code to the dedicated security channel.
     Enforces:
+    - Atomic per-IP mutex to defeat concurrent race-condition bypass attacks
     - 10-minute IP lockout if previously locked out
     - Max 4 requests per minute (Rate Limit)
     - 60 seconds validity
@@ -308,66 +322,68 @@ async def send_otp(request: Request, payload: Optional[OtpSendRequest] = None):
     - Unique per-tab binding
     """
     ip = get_client_ip(request)
-    is_locked, remaining_lockout = await check_ip_lockout(ip)
-    if is_locked:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Security Lockout: Your IP is locked out. Please wait {remaining_lockout} seconds."
+    ip_lock = await get_ip_otp_lock(ip)
+
+    async with ip_lock:
+        is_locked, remaining_lockout = await check_ip_lockout(ip)
+        if is_locked:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Security Lockout: Your IP is locked out. Please wait {remaining_lockout} seconds."
+            )
+
+        allowed, retry_after = await check_rate_limit(ip, max_requests=OTP_MAX_REQUESTS_PER_MIN, window_seconds=60)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded (max {OTP_MAX_REQUESTS_PER_MIN}/min). Please wait {retry_after} seconds before requesting a new code."
+            )
+
+        target_tab = (payload.tab if payload and payload.tab else "Workspace Vault").strip()
+        target_action = (payload.action if payload and payload.action else "access").strip()
+        target_name = payload.target_name.strip() if payload and payload.target_name else None
+
+        # Cancel previous OTP in Telegram and in database for this IP
+        if storage_client:
+            await storage_client.cancel_active_otp(ip)
+
+        # Generate 6-digit numeric OTP
+        code = f"{secrets.randbelow(900000) + 100000}"
+
+        # Record in SQLite session with unique tab binding
+        session_data = await create_otp_session(
+            ip=ip,
+            code=code,
+            expiry_seconds=OTP_EXPIRY_SECONDS,
+            tab=target_tab,
+            action=target_action,
+            target_name=target_name
         )
 
-    allowed, retry_after = await check_rate_limit(ip, max_requests=OTP_MAX_REQUESTS_PER_MIN, window_seconds=60)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded (max {OTP_MAX_REQUESTS_PER_MIN}/min). Please wait {retry_after} seconds before requesting a new code."
-        )
+        context = {
+            "tab": target_tab,
+            "action": target_action,
+            "target_name": target_name
+        }
 
-    target_tab = (payload.tab if payload and payload.tab else "Workspace Vault").strip()
-    target_action = (payload.action if payload and payload.action else "access").strip()
-    target_name = payload.target_name.strip() if payload and payload.target_name else None
+        if storage_client.is_demo:
+            logger.info(f"[SECURITY] Demo OTP generated for IP {ip}: {code}")
+            msg = "Demo Mode: Verification code generated and logged to secure console."
+        else:
+            # Dispatch to dedicated Telegram OTP channel
+            success, msg = await storage_client.send_otp_to_owner(code, ip, expiry_seconds=OTP_EXPIRY_SECONDS, context_info=context)
+            if not success:
+                raise HTTPException(status_code=500, detail=msg)
 
-    # Cancel previous OTP in Telegram and in database for this IP
-    if storage_client:
-        await storage_client.cancel_active_otp(ip)
-    await cancel_otp_sessions(ip)
-
-    # Generate 6-digit numeric OTP
-    code = f"{secrets.randbelow(900000) + 100000}"
-
-    # Record in SQLite session with unique tab binding
-    session_data = await create_otp_session(
-        ip=ip,
-        code=code,
-        expiry_seconds=OTP_EXPIRY_SECONDS,
-        tab=target_tab,
-        action=target_action,
-        target_name=target_name
-    )
-
-    context = {
-        "tab": target_tab,
-        "action": target_action,
-        "target_name": target_name
-    }
-
-    if storage_client.is_demo:
-        logger.info(f"[SECURITY] Demo OTP generated for IP {ip}: {code}")
-        msg = "Demo Mode: Verification code generated and logged to secure console."
-    else:
-        # Dispatch to dedicated Telegram OTP channel
-        success, msg = await storage_client.send_otp_to_owner(code, ip, expiry_seconds=OTP_EXPIRY_SECONDS, context_info=context)
-        if not success:
-            raise HTTPException(status_code=500, detail=msg)
-
-    return {
-        "success": True,
-        "message": msg,
-        "expires_in": OTP_EXPIRY_SECONDS,
-        "tab": target_tab,
-        "action": target_action,
-        "target_name": target_name,
-        "session_id": session_data["id"]
-    }
+        return {
+            "success": True,
+            "message": msg,
+            "expires_in": OTP_EXPIRY_SECONDS,
+            "tab": target_tab,
+            "action": target_action,
+            "target_name": target_name,
+            "session_id": session_data["id"]
+        }
 
 @app.post("/api/auth/verify-otp")
 async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Response):
@@ -408,7 +424,7 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
         issued_tab = active_otp["tab"].strip().lower()
         if req_tab != issued_tab:
             # Cross-tab mismatch detected! Cancel active OTP and purge Telegram message immediately
-            await cancel_otp_sessions(ip)
+            await cancel_otp_sessions(ip, session_id=active_otp["id"])
             if storage_client:
                 await storage_client.cancel_active_otp(ip)
             raise HTTPException(
@@ -419,7 +435,7 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
     # Action consistency check
     if payload.action and active_otp.get("action"):
         if payload.action.strip().lower() != active_otp["action"].strip().lower():
-            await cancel_otp_sessions(ip)
+            await cancel_otp_sessions(ip, session_id=active_otp["id"])
             if storage_client:
                 await storage_client.cancel_active_otp(ip)
             raise HTTPException(
@@ -490,12 +506,20 @@ async def verify_otp(payload: OtpVerifyRequest, request: Request, response: Resp
 
 @app.post("/api/auth/cancel-otp")
 async def cancel_otp(request: Request, payload: Optional[OtpCancelRequest] = None):
-    """Explicitly cancels the active OTP session and immediately purges the message from Telegram."""
+    """
+    Explicitly cancels the active OTP session and immediately purges the message from Telegram.
+    Requires session_id verification to prevent unauthenticated IP-scoped denial of service attacks.
+    """
     ip = get_client_ip(request)
-    tab = payload.tab if payload and payload.tab else None
     session_id = payload.session_id if payload and payload.session_id else None
-    await cancel_otp_sessions(ip=ip, tab=tab, session_id=session_id)
-    if storage_client:
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session ID is required to cancel an OTP session."
+        )
+    tab = payload.tab if payload and payload.tab else None
+    cancelled = await cancel_otp_sessions(ip=ip, tab=tab, session_id=session_id)
+    if cancelled and storage_client:
         await storage_client.cancel_active_otp(ip)
     return {"success": True, "message": "Active OTP was cancelled and purged."}
 
