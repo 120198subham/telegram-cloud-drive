@@ -29,7 +29,7 @@ graph TB
     end
 
     subgraph GITHUB["🐙 GitHub (Source Control)"]
-        REPO["Private Repo\n120198subham/telegram-cloud-drive\nCI/CD trigger on git push to main"]
+        REPO["Public Repo\n120198subham/telegram-cloud-drive\nCI/CD trigger on git push to main"]
     end
 
     CLIENT -->|"HTTPS REST API\nJSON + Multipart"| UVICORN
