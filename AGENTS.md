@@ -1,6 +1,12 @@
-# Security Rules
+# Security Rules & Non-Regression Mandate
 
 These rules apply to all code generated in this project. They are non-negotiable.
+
+> [!CAUTION]
+> **CRITICAL AIKIDO NON-REGRESSION RULE:**
+> All 17 vulnerabilities previously flagged by Aikido Security are strictly documented in [`AIKIDO_SECURITY_REGISTRY.md`](file:///C:/Users/12019/.gemini/antigravity/scratch/telegram-cloud-drive/AIKIDO_SECURITY_REGISTRY.md).
+> Any code modified, refactored, or added MUST NOT re-introduce any of those vulnerabilities.
+> Always run `pytest test_app.py -v` (all 17 tests must remain green) before committing any changes.
 
 ## Secrets
 
