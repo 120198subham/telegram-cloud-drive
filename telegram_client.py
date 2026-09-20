@@ -1,8 +1,9 @@
 import os
+import re
 import asyncio
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, Optional, Tuple, Any, Dict
+from typing import AsyncGenerator, Optional, Tuple, Any, Dict, List
 
 from config import (
     API_ID,
@@ -241,11 +242,21 @@ class TelegramStorageClient:
                         else:
                             existing_note_ids = await get_existing_note_message_ids()
                             if msg.id not in existing_note_ids:
-                                clean_content = raw_text
-                                for prefix in ["📝 **[NOTE]**\n\n", "📝 **[NOTE]**", "📝 [NOTE]\n\n", "📝 [NOTE]"]:
-                                    if clean_content.startswith(prefix):
-                                        clean_content = clean_content[len(prefix):].strip()
-                                        break
+                                from database import append_note_chunk
+
+                                # Check if message is a continuation chunk (via [cont:<id>] tag or direct reply)
+                                cont_match = re.search(r'\[cont:(\d+)\]', raw_text)
+                                parent_id = int(cont_match.group(1)) if cont_match else getattr(msg, 'reply_to_msg_id', None)
+
+                                # Strip prefix including (Part X/Y) and [cont:Z]
+                                clean_content = re.sub(r'^📝\s*(\*\*\[NOTE\]\*\*|\[NOTE\])(\s*\(Part\s*\d+/\d+\))?(\s*\[cont:\d+\])?\s*\n*', '', raw_text).strip()
+
+                                if parent_id:
+                                    merged = await append_note_chunk(parent_id, msg.id, clean_content)
+                                    if merged:
+                                        logger.info(f"Merged continuation note chunk {msg.id} into parent {parent_id}")
+                                        return
+
                                 await add_note(
                                     content=clean_content,
                                     telegram_message_id=msg.id,
@@ -446,11 +457,19 @@ class TelegramStorageClient:
                         existing_todo_ids.add(msg.id)
                         imported += 1
                     else:
-                        clean_content = raw_text
-                        for prefix in ["📝 **[NOTE]**\n\n", "📝 **[NOTE]**", "📝 [NOTE]\n\n", "📝 [NOTE]"]:
-                            if clean_content.startswith(prefix):
-                                clean_content = clean_content[len(prefix):].strip()
-                                break
+                        from database import append_note_chunk
+
+                        cont_match = re.search(r'\[cont:(\d+)\]', raw_text)
+                        parent_id = int(cont_match.group(1)) if cont_match else getattr(msg, 'reply_to_msg_id', None)
+
+                        clean_content = re.sub(r'^📝\s*(\*\*\[NOTE\]\*\*|\[NOTE\])(\s*\(Part\s*\d+/\d+\))?(\s*\[cont:\d+\])?\s*\n*', '', raw_text).strip()
+
+                        if parent_id:
+                            merged = await append_note_chunk(parent_id, msg.id, clean_content)
+                            if merged:
+                                existing_note_ids.add(msg.id)
+                                continue
+
                         await add_note(
                             content=clean_content,
                             telegram_message_id=msg.id,
@@ -857,55 +876,77 @@ class TelegramStorageClient:
             except Exception as e:
                 logger.error(f"Failed to edit todo message {telegram_message_id}: {e}")
 
-    async def send_note_message(self, content: str) -> Tuple[int, int]:
-        """Send a quick text note to the Todo/Notes channel with auto-chunking (>3900 chars) and parse-mode fallback."""
+    async def send_note_message(self, content: str) -> Tuple[int, int, List[int]]:
+        """Send a quick text note to the Todo/Notes channel with auto-chunking (>3800 chars) and parse-mode fallback."""
         target_channel_id = TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID
         if self.is_demo or not self.client or not self.is_connected:
             self._demo_counter += 1
-            return self._demo_counter, target_channel_id
+            return self._demo_counter, target_channel_id, []
 
         entity = await self.get_todo_entity() or self.channel_entity
         if not entity:
             logger.warning("No channel entity available for note. Saving locally.")
             self._demo_counter += 1
-            return self._demo_counter, target_channel_id
+            return self._demo_counter, target_channel_id, []
 
-        header = "📝 [NOTE]\n\n"
-        full_text = f"{header}{content}"
-        # Telegram hard-limits message text to 4096 characters. Use safe 3900-character chunks.
-        chunk_size = 3900
-        chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
-        if not chunks:
-            chunks = [full_text]
+        # Telegram hard-limits message text to 4096 characters. Use safe 3800-character chunks.
+        chunk_size = 3800
+        content_chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
+        if not content_chunks:
+            content_chunks = [content]
 
-        first_msg = None
-        for idx, chunk in enumerate(chunks):
+        num_chunks = len(content_chunks)
+
+        if num_chunks == 1:
             sent_msg = None
-            if len(chunks) == 1:
-                try:
-                    sent_msg = await self.client.send_message(
-                        entity=entity,
-                        message=f"📝 **[NOTE]**\n\n{content}"
-                    )
-                except Exception as md_err:
-                    logger.debug(f"Markdown note send failed ({md_err}), falling back to plain text send.")
+            try:
+                sent_msg = await self.client.send_message(
+                    entity=entity,
+                    message=f"📝 **[NOTE]**\n\n{content}"
+                )
+            except Exception as md_err:
+                logger.debug(f"Markdown note send failed ({md_err}), falling back to plain text send.")
 
             if not sent_msg:
                 try:
                     sent_msg = await self.client.send_message(
                         entity=entity,
-                        message=chunk,
+                        message=f"📝 [NOTE]\n\n{content}",
                         parse_mode=None
                     )
                 except Exception as e:
-                    logger.error(f"Failed to send note chunk {idx+1}/{len(chunks)} to Telegram: {e}")
-                    if first_msg is None:
-                        raise RuntimeError(f"Telegram delivery failed: {e}")
+                    logger.error(f"Failed to send note to Telegram: {e}")
+                    raise RuntimeError(f"Telegram delivery failed: {e}")
 
-            if first_msg is None and sent_msg:
-                first_msg = sent_msg
+            return sent_msg.id, target_channel_id, []
 
-        return (first_msg.id if first_msg else self._demo_counter), target_channel_id
+        # Multi-part chunked message (>3800 chars)
+        first_chunk_text = f"📝 [NOTE] (Part 1/{num_chunks})\n\n{content_chunks[0]}"
+        try:
+            first_msg = await self.client.send_message(
+                entity=entity,
+                message=first_chunk_text,
+                parse_mode=None
+            )
+        except Exception as e:
+            logger.error(f"Failed to send initial note chunk 1/{num_chunks} to Telegram: {e}")
+            raise RuntimeError(f"Telegram delivery failed: {e}")
+
+        extra_ids: List[int] = []
+        for idx in range(1, num_chunks):
+            chunk_text = f"📝 [NOTE] (Part {idx+1}/{num_chunks}) [cont:{first_msg.id}]\n\n{content_chunks[idx]}"
+            try:
+                cont_msg = await self.client.send_message(
+                    entity=entity,
+                    message=chunk_text,
+                    reply_to=first_msg.id,
+                    parse_mode=None
+                )
+                extra_ids.append(cont_msg.id)
+            except Exception as e:
+                logger.error(f"Failed to send note chunk {idx+1}/{num_chunks} to Telegram: {e}")
+
+        return first_msg.id, target_channel_id, extra_ids
 
     async def delete_message(self, channel_id: int, message_id: int, is_demo: bool = False, filename: Optional[str] = None) -> bool:
         """Deletes any message from Telegram (Storage, Software, or Todo channel)."""

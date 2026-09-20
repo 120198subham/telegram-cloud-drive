@@ -974,12 +974,13 @@ async def create_note(payload: NoteCreate):
         raise HTTPException(status_code=400, detail="Note content must be 10,000 characters or fewer.")
 
     try:
-        msg_id, channel_id = await storage_client.send_note_message(clean_content)
+        msg_id, channel_id, extra_ids = await storage_client.send_note_message(clean_content)
         note = await add_note(
             content=clean_content,
             telegram_message_id=msg_id,
             telegram_channel_id=channel_id,
-            is_demo=storage_client.is_demo or not storage_client.is_connected
+            is_demo=storage_client.is_demo or not storage_client.is_connected,
+            extra_message_ids=extra_ids
         )
         return note
     except HTTPException:
@@ -990,16 +991,19 @@ async def create_note(payload: NoteCreate):
 
 @app.delete("/api/notes/{note_id}")
 async def delete_single_note(note_id: str):
-    """Delete a note from DB and remove message from Telegram."""
+    """Delete a note from DB and remove all associated chunk messages from Telegram."""
     note = await delete_note(note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
 
-    await storage_client.delete_message(
-        channel_id=note["telegram_channel_id"],
-        message_id=note["telegram_message_id"],
-        is_demo=note["is_demo"]
-    )
+    all_msg_ids = [note["telegram_message_id"]] + note.get("extra_message_ids", [])
+    for mid in all_msg_ids:
+        if mid:
+            await storage_client.delete_message(
+                channel_id=note["telegram_channel_id"],
+                message_id=mid,
+                is_demo=note["is_demo"]
+            )
     return {"success": True, "message": "Note deleted."}
 
 # ==================== STATIC UI ====================

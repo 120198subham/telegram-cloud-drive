@@ -2,7 +2,7 @@ import aiosqlite
 import uuid
 import hashlib
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 from config import DB_PATH
 
 def format_size(size_bytes: int) -> str:
@@ -84,9 +84,14 @@ async def init_db() -> None:
                 telegram_message_id INTEGER,
                 telegram_channel_id INTEGER,
                 is_demo INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                extra_message_ids TEXT DEFAULT ''
             )
         """)
+        try:
+            await db.execute("ALTER TABLE notes ADD COLUMN extra_message_ids TEXT DEFAULT ''")
+        except Exception:
+            pass
         await db.execute("CREATE INDEX IF NOT EXISTS idx_notes_created ON notes(created_at DESC)")
 
         # OTP Sessions table (with unique tab binding & cancellation tracking)
@@ -187,11 +192,22 @@ async def get_existing_file_message_ids(channel_id: Optional[int] = None) -> set
         return {r[0] for r in rows}
 
 async def get_existing_note_message_ids() -> set:
-    """Return set of all telegram_message_id values currently stored in notes table."""
+    """Return set of all telegram_message_id and extra_message_ids values currently stored in notes table."""
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT telegram_message_id FROM notes WHERE telegram_message_id IS NOT NULL")
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT telegram_message_id, extra_message_ids FROM notes WHERE telegram_message_id IS NOT NULL")
         rows = await cursor.fetchall()
-        return {r[0] for r in rows}
+        ids = set()
+        for r in rows:
+            if r["telegram_message_id"] is not None:
+                ids.add(r["telegram_message_id"])
+            extra = r["extra_message_ids"] if "extra_message_ids" in r.keys() else ""
+            if extra:
+                for extra_id in str(extra).split(","):
+                    extra_id = extra_id.strip()
+                    if extra_id.isdigit():
+                        ids.add(int(extra_id))
+        return ids
 
 async def get_existing_todo_message_ids() -> set:
     """Return set of all telegram_message_id values currently stored in todos table."""
@@ -391,17 +407,25 @@ async def add_note(
     telegram_message_id: int,
     telegram_channel_id: int,
     is_demo: bool = False,
-    created_at: Optional[str] = None
+    created_at: Optional[str] = None,
+    extra_message_ids: Optional[Union[List[int], str]] = None
 ) -> Dict[str, Any]:
-    """Save a quick text note."""
+    """Save a quick text note, optionally linking multi-part Telegram chunk message IDs."""
     note_id = str(uuid.uuid4())
     if not created_at:
         created_at = datetime.now(timezone.utc).isoformat()
+
+    extra_str = ""
+    if isinstance(extra_message_ids, list):
+        extra_str = ",".join(str(x) for x in extra_message_ids if str(x).isdigit())
+    elif isinstance(extra_message_ids, str):
+        extra_str = extra_message_ids.strip()
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            INSERT INTO notes (id, content, telegram_message_id, telegram_channel_id, is_demo, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (note_id, content, telegram_message_id, telegram_channel_id, 1 if is_demo else 0, created_at))
+            INSERT INTO notes (id, content, telegram_message_id, telegram_channel_id, is_demo, created_at, extra_message_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (note_id, content, telegram_message_id, telegram_channel_id, 1 if is_demo else 0, created_at, extra_str))
         await db.commit()
     return {
         "id": note_id,
@@ -409,7 +433,8 @@ async def add_note(
         "telegram_message_id": telegram_message_id,
         "telegram_channel_id": telegram_channel_id,
         "is_demo": is_demo,
-        "created_at": created_at
+        "created_at": created_at,
+        "extra_message_ids": [int(x) for x in extra_str.split(",") if x.strip().isdigit()] if extra_str else []
     }
 
 async def get_notes() -> List[Dict[str, Any]]:
@@ -424,23 +449,76 @@ async def get_notes() -> List[Dict[str, Any]]:
             "telegram_message_id": r["telegram_message_id"],
             "telegram_channel_id": r["telegram_channel_id"],
             "is_demo": bool(r["is_demo"]),
-            "created_at": r["created_at"]
+            "created_at": r["created_at"],
+            "extra_message_ids": [
+                int(x) for x in str(r["extra_message_ids"]).split(",") if x.strip().isdigit()
+            ] if "extra_message_ids" in r.keys() and r["extra_message_ids"] else []
         } for r in rows]
 
+async def get_note_by_telegram_id(telegram_message_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieve note record by its primary telegram_message_id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM notes WHERE telegram_message_id = ?", (telegram_message_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "content": row["content"],
+            "telegram_message_id": row["telegram_message_id"],
+            "telegram_channel_id": row["telegram_channel_id"],
+            "is_demo": bool(row["is_demo"]),
+            "created_at": row["created_at"],
+            "extra_message_ids": [
+                int(x) for x in str(row["extra_message_ids"]).split(",") if x.strip().isdigit()
+            ] if "extra_message_ids" in row.keys() and row["extra_message_ids"] else []
+        }
+
+async def append_note_chunk(parent_telegram_id: int, new_message_id: int, chunk_content: str) -> bool:
+    """
+    Append text chunk to an existing note and record continuation message ID.
+    Used when a multi-part note arrives in chunks from Telegram.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM notes WHERE telegram_message_id = ?", (parent_telegram_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return False
+
+        current_content = row["content"]
+        updated_content = current_content + chunk_content
+        current_extra = str(row["extra_message_ids"]) if "extra_message_ids" in row.keys() and row["extra_message_ids"] else ""
+        extra_list = [x.strip() for x in current_extra.split(",") if x.strip().isdigit()]
+        if str(new_message_id) not in extra_list:
+            extra_list.append(str(new_message_id))
+        updated_extra = ",".join(extra_list)
+
+        await db.execute("""
+            UPDATE notes SET content = ?, extra_message_ids = ? WHERE id = ?
+        """, (updated_content, updated_extra, row["id"]))
+        await db.commit()
+        return True
+
 async def delete_note(note_id: str) -> Optional[Dict[str, Any]]:
-    """Delete a note."""
+    """Delete a note and return its metadata including extra Telegram chunk message IDs."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
         row = await cursor.fetchone()
         if not row:
             return None
+        extra_ids = [
+            int(x) for x in str(row["extra_message_ids"]).split(",") if x.strip().isdigit()
+        ] if "extra_message_ids" in row.keys() and row["extra_message_ids"] else []
         note = {
             "id": row["id"],
             "content": row["content"],
             "telegram_message_id": row["telegram_message_id"],
             "telegram_channel_id": row["telegram_channel_id"],
-            "is_demo": bool(row["is_demo"])
+            "is_demo": bool(row["is_demo"]),
+            "extra_message_ids": extra_ids
         }
         await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         await db.commit()

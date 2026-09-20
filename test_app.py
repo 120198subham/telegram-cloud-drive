@@ -674,6 +674,88 @@ async def test_notes_and_todos_robustness():
         assert res_404.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_multipart_note_unification():
+    """Verify long notes with continuation chunks unify into a single note on the web UI."""
+    from database import (
+        add_note,
+        get_notes,
+        delete_note,
+        get_existing_note_message_ids,
+        append_note_chunk,
+        get_note_by_telegram_id,
+    )
+
+    # 1. Add note with extra_message_ids
+    note = await add_note(
+        content="Part 1 content",
+        telegram_message_id=501,
+        telegram_channel_id=-100123456789,
+        is_demo=True,
+        extra_message_ids=[502, 503]
+    )
+    assert note["telegram_message_id"] == 501
+    assert note["extra_message_ids"] == [502, 503]
+
+    # 2. Verify get_existing_note_message_ids tracks both primary and continuation IDs
+    existing_ids = await get_existing_note_message_ids()
+    assert 501 in existing_ids
+    assert 502 in existing_ids
+    assert 503 in existing_ids
+
+    # 3. Verify get_notes lists this as a single unified note
+    all_notes = await get_notes()
+    matching = [n for n in all_notes if n["telegram_message_id"] == 501]
+    assert len(matching) == 1
+    assert matching[0]["content"] == "Part 1 content"
+    assert matching[0]["extra_message_ids"] == [502, 503]
+
+    # 4. Append note chunk (simulating real-time Telegram continuation arrival)
+    success = await append_note_chunk(
+        parent_telegram_id=501,
+        new_message_id=504,
+        chunk_content="\nPart 2 continuation text"
+    )
+    assert success is True
+
+    # Check updated note content and extra IDs
+    updated_note = await get_note_by_telegram_id(501)
+    assert updated_note is not None
+    assert updated_note["content"] == "Part 1 content\nPart 2 continuation text"
+    assert 504 in updated_note["extra_message_ids"]
+
+    # 5. Delete note returns all chunk IDs for Telegram purging
+    deleted = await delete_note(updated_note["id"])
+    assert deleted is not None
+    assert deleted["telegram_message_id"] == 501
+    assert 502 in deleted["extra_message_ids"]
+    assert 503 in deleted["extra_message_ids"]
+    assert 504 in deleted["extra_message_ids"]
+
+    # 6. Test API with long text (>4000 chars)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
+
+        long_text = "OmniRoute configuration script: " + ("# Code line here\n" * 250)
+        assert len(long_text) > 4000
+
+        res_post = await client.post("/api/notes", json={"content": long_text})
+        assert res_post.status_code == 200
+        created_id = res_post.json()["id"]
+
+        # Verify only 1 note is present for this ID on the web
+        res_list = await client.get("/api/notes")
+        assert res_list.status_code == 200
+        api_matching = [n for n in res_list.json()["notes"] if n["id"] == created_id]
+        assert len(api_matching) == 1
+        assert api_matching[0]["content"] == long_text.strip()
+
+        # Cleanup
+        await client.delete(f"/api/notes/{created_id}")
+
+
 
 
 
