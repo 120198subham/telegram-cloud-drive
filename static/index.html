@@ -485,7 +485,7 @@
                     </div>
                     <textarea id="noteInput" rows="3" placeholder="Type a message, note, or link to send..." class="w-full p-3 border rounded-xl text-base sm:text-sm focus:outline-none focus:border-sky-500 transition resize-none"></textarea>
                     <div class="flex justify-end">
-                        <button onclick="sendNote()" class="px-4 py-2.5 bg-sky-500 hover:bg-sky-600 active:scale-95 text-white text-xs sm:text-sm font-medium rounded-xl flex items-center space-x-1.5 transition shadow-lg shadow-sky-500/20">
+                        <button id="sendNoteBtn" onclick="sendNote()" class="px-4 py-2.5 bg-sky-500 hover:bg-sky-600 active:scale-95 text-white text-xs sm:text-sm font-medium rounded-xl flex items-center space-x-1.5 transition shadow-lg shadow-sky-500/20">
                             <i data-lucide="send" class="w-4 h-4"></i>
                             <span>Send to Telegram</span>
                         </button>
@@ -509,7 +509,7 @@
             <div id="tabContent-todos" class="tab-content hidden space-y-4">
                 <div class="glass p-3 sm:p-4 rounded-2xl flex items-center space-x-2">
                     <input type="text" id="todoInput" placeholder="What needs to be done?" onkeydown="if(event.key==='Enter') createTodo()" class="flex-1 min-w-0 px-3.5 py-2.5 border rounded-xl text-base sm:text-sm focus:outline-none focus:border-sky-500 transition">
-                    <button onclick="createTodo()" class="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-xs sm:text-sm font-medium rounded-xl flex items-center space-x-1 transition shadow-lg shadow-emerald-500/20 shrink-0">
+                    <button id="addTodoBtn" onclick="createTodo()" class="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-xs sm:text-sm font-medium rounded-xl flex items-center space-x-1 transition shadow-lg shadow-emerald-500/20 shrink-0">
                         <i data-lucide="plus" class="w-4 h-4"></i>
                         <span>Add</span>
                     </button>
@@ -2143,25 +2143,119 @@
             }
         }
 
+        // ==================== TOAST NOTIFICATIONS ====================
+        function showToast(message, type = 'info') {
+            let container = document.getElementById('toastContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toastContainer';
+                container.className = 'fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4';
+                document.body.appendChild(container);
+            }
+            const toast = document.createElement('div');
+            const bgColors = {
+                success: 'bg-emerald-600 text-white border-emerald-400/40 shadow-emerald-500/20',
+                error: 'bg-red-600 text-white border-red-400/40 shadow-red-500/20',
+                warning: 'bg-amber-600 text-white border-amber-400/40 shadow-amber-500/20',
+                info: 'bg-sky-600 text-white border-sky-400/40 shadow-sky-500/20'
+            };
+            const iconNames = {
+                success: 'check-circle-2',
+                error: 'alert-circle',
+                warning: 'alert-triangle',
+                info: 'info'
+            };
+            const colorClass = bgColors[type] || bgColors.info;
+            const icon = iconNames[type] || 'info';
+            toast.className = `pointer-events-auto flex items-center space-x-2.5 p-3 rounded-xl border shadow-xl backdrop-blur-md text-xs sm:text-sm font-medium transition-all duration-300 transform translate-y-2 opacity-0 ${colorClass}`;
+            toast.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 shrink-0"></i><span class="flex-1 leading-snug">${escapeHtml(message)}</span>`;
+            container.appendChild(toast);
+            refreshIcons();
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+                toast.classList.add('translate-y-0', 'opacity-100');
+            });
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-2', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
         async function sendNote() {
             const input = document.getElementById('noteInput');
-            const content = input.value.trim();
-            if (!content) return;
-            await fetch('/api/notes', {
-                method: 'POST',
-                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ content })
-            });
-            input.value = '';
-            fetchNotes();
+            const btn = document.getElementById('sendNoteBtn');
+            const content = (input ? input.value : '').trim();
+            if (!content) {
+                showToast("Please enter text to send.", "warning");
+                if (input) input.focus();
+                return;
+            }
+
+            const originalBtnHtml = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-70', 'cursor-not-allowed');
+                btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Sending...</span>`;
+                refreshIcons();
+            }
+
+            try {
+                const res = await fetch('/api/notes', {
+                    method: 'POST',
+                    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ content })
+                });
+
+                if (res.status === 401) {
+                    lockApp();
+                    showToast("Session expired. Please authenticate to send text.", "error");
+                    return;
+                }
+
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || "Failed to send text note.");
+                }
+
+                if (input) input.value = '';
+                showToast("Note sent to Telegram!", "success");
+                await fetchNotes();
+            } catch (err) {
+                console.error("Send note error:", err);
+                showToast(err.message || "Failed to deliver note.", "error");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-70', 'cursor-not-allowed');
+                    btn.innerHTML = originalBtnHtml;
+                    refreshIcons();
+                }
+            }
         }
 
         async function deleteNote(id) {
-            await fetch(`/api/notes/${id}`, {
-                method: 'DELETE',
-                headers: getAuthHeaders()
-            });
-            fetchNotes();
+            if (!confirm("Are you sure you want to delete this note?")) return;
+            try {
+                const res = await fetch(`/api/notes/${id}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+                if (res.status === 401) {
+                    lockApp();
+                    showToast("Authentication required to delete note.", "error");
+                    return;
+                }
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || "Failed to delete note.");
+                }
+                showToast("Note deleted.", "info");
+                fetchNotes();
+            } catch (err) {
+                console.error("Delete note error:", err);
+                showToast(err.message || "Failed to delete note.", "error");
+            }
         }
 
         // ==================== TO-DO LIST ====================
@@ -2211,41 +2305,125 @@
 
         async function createTodo() {
             const input = document.getElementById('todoInput');
-            const title = input.value.trim();
-            if (!title) return;
-            await fetch('/api/todos', {
-                method: 'POST',
-                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ title })
-            });
-            input.value = '';
-            fetchTodos();
+            const btn = document.getElementById('addTodoBtn');
+            const title = (input ? input.value : '').trim();
+            if (!title) {
+                showToast("Please enter a task title.", "warning");
+                if (input) input.focus();
+                return;
+            }
+
+            const originalBtnHtml = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-70', 'cursor-not-allowed');
+                btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Adding...</span>`;
+                refreshIcons();
+            }
+
+            try {
+                const res = await fetch('/api/todos', {
+                    method: 'POST',
+                    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ title })
+                });
+
+                if (res.status === 401) {
+                    lockApp();
+                    showToast("Session expired. Please authenticate to add tasks.", "error");
+                    return;
+                }
+
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || "Failed to create task.");
+                }
+
+                if (input) input.value = '';
+                showToast("Task added successfully!", "success");
+                await fetchTodos();
+            } catch (err) {
+                console.error("Create todo error:", err);
+                showToast(err.message || "Failed to create task.", "error");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-70', 'cursor-not-allowed');
+                    btn.innerHTML = originalBtnHtml;
+                    refreshIcons();
+                }
+            }
         }
 
         async function toggleTodo(id, completed) {
-            await fetch(`/api/todos/${id}`, {
-                method: 'PATCH',
-                headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ completed })
-            });
-            fetchTodos();
+            try {
+                const res = await fetch(`/api/todos/${id}`, {
+                    method: 'PATCH',
+                    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ completed })
+                });
+                if (res.status === 401) {
+                    lockApp();
+                    showToast("Session expired. Please authenticate to update tasks.", "error");
+                    return;
+                }
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || "Failed to update task.");
+                }
+                fetchTodos();
+            } catch (err) {
+                console.error("Toggle todo error:", err);
+                showToast(err.message || "Failed to update task.", "error");
+                fetchTodos();
+            }
         }
 
         async function deleteTodo(id) {
-            await fetch(`/api/todos/${id}`, {
-                method: 'DELETE',
-                headers: getAuthHeaders()
-            });
-            fetchTodos();
+            try {
+                const res = await fetch(`/api/todos/${id}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+                if (res.status === 401) {
+                    lockApp();
+                    showToast("Session expired. Please authenticate to delete tasks.", "error");
+                    return;
+                }
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || "Failed to delete task.");
+                }
+                showToast("Task deleted.", "info");
+                fetchTodos();
+            } catch (err) {
+                console.error("Delete todo error:", err);
+                showToast(err.message || "Failed to delete task.", "error");
+            }
         }
 
         async function clearCompletedTodos() {
             if (!confirm("Clear all completed tasks? They will be removed from your list and Telegram.")) return;
-            await fetch('/api/todos/clear-completed', {
-                method: 'POST',
-                headers: getAuthHeaders()
-            });
-            fetchTodos();
+            try {
+                const res = await fetch('/api/todos/clear-completed', {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+                if (res.status === 401) {
+                    lockApp();
+                    showToast("Session expired. Please authenticate.", "error");
+                    return;
+                }
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || "Failed to clear completed tasks.");
+                }
+                showToast("Completed tasks cleared.", "info");
+                fetchTodos();
+            } catch (err) {
+                console.error("Clear completed todos error:", err);
+                showToast(err.message || "Failed to clear completed tasks.", "error");
+            }
         }
 
         function filterTodos(filter) {

@@ -631,6 +631,50 @@ async def test_forced_prefetch_requires_authentication():
         assert res_auth.json()["success"] is True
 
 
+@pytest.mark.asyncio
+async def test_notes_and_todos_robustness():
+    """Verify notes API input validation, lifecycle, and resilient fallback."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        valid_token = create_signed_session_token()
+        client.cookies.set("tg_auth", valid_token)
+
+        # 1. Empty note content rejected
+        res_empty = await client.post("/api/notes", json={"content": "   "})
+        assert res_empty.status_code == 400
+        assert "empty" in res_empty.json()["detail"].lower()
+
+        # 2. Oversized note content rejected (> 10,000 chars)
+        res_oversized = await client.post("/api/notes", json={"content": "A" * 10001})
+        assert res_oversized.status_code == 400
+        assert "10,000 characters" in res_oversized.json()["detail"]
+
+        # 3. Valid note created successfully
+        test_content = "Resilience test note: Hello Telegram Cloud Drive!"
+        res_create = await client.post("/api/notes", json={"content": test_content})
+        assert res_create.status_code == 200
+        note_data = res_create.json()
+        assert note_data["content"] == test_content
+        assert "id" in note_data
+        assert "telegram_message_id" in note_data
+        note_id = note_data["id"]
+
+        # 4. Note listed in list_notes
+        res_list = await client.get("/api/notes")
+        assert res_list.status_code == 200
+        assert any(n["id"] == note_id for n in res_list.json()["notes"])
+
+        # 5. Delete note
+        res_delete = await client.delete(f"/api/notes/{note_id}")
+        assert res_delete.status_code == 200
+        assert res_delete.json()["success"] is True
+
+        # 6. Delete non-existent note returns 404
+        res_404 = await client.delete(f"/api/notes/{note_id}")
+        assert res_404.status_code == 404
+
+
+
 
 
 

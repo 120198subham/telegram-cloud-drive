@@ -895,14 +895,20 @@ async def create_todo(payload: TodoCreate):
     if len(clean_title) > 1000:
         raise HTTPException(status_code=400, detail="Task title must be 1000 characters or fewer.")
 
-    msg_id, channel_id = await storage_client.send_todo_message(clean_title)
-    todo = await add_todo(
-        title=clean_title,
-        telegram_message_id=msg_id,
-        telegram_channel_id=channel_id,
-        is_demo=storage_client.is_demo
-    )
-    return todo
+    try:
+        msg_id, channel_id = await storage_client.send_todo_message(clean_title)
+        todo = await add_todo(
+            title=clean_title,
+            telegram_message_id=msg_id,
+            telegram_channel_id=channel_id,
+            is_demo=storage_client.is_demo or not storage_client.is_connected
+        )
+        return todo
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating todo: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process todo: {str(e)}")
 
 @app.patch("/api/todos/{todo_id}")
 async def toggle_todo(todo_id: str, payload: TodoUpdate):
@@ -967,14 +973,20 @@ async def create_note(payload: NoteCreate):
     if len(clean_content) > 10_000:
         raise HTTPException(status_code=400, detail="Note content must be 10,000 characters or fewer.")
 
-    msg_id, channel_id = await storage_client.send_note_message(clean_content)
-    note = await add_note(
-        content=clean_content,
-        telegram_message_id=msg_id,
-        telegram_channel_id=channel_id,
-        is_demo=storage_client.is_demo
-    )
-    return note
+    try:
+        msg_id, channel_id = await storage_client.send_note_message(clean_content)
+        note = await add_note(
+            content=clean_content,
+            telegram_message_id=msg_id,
+            telegram_channel_id=channel_id,
+            is_demo=storage_client.is_demo or not storage_client.is_connected
+        )
+        return note
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating note: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process note: {str(e)}")
 
 @app.delete("/api/notes/{note_id}")
 async def delete_single_note(note_id: str):

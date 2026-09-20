@@ -63,6 +63,25 @@ class TelegramStorageClient:
             logger.debug(f"Could not resolve SOFTWARE_CHANNEL_ID ({target_soft_id}): {e}. Make sure bot is added as administrator.")
             return None
 
+    async def get_todo_entity(self):
+        """Dynamically resolve or return the todo/notes channel entity."""
+        if self.is_demo or not self.client:
+            return None
+        if self.todo_channel_entity is not None and self.todo_channel_entity != self.channel_entity:
+            return self.todo_channel_entity
+        target_todo_id = TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID
+        if target_todo_id == CHANNEL_ID:
+            self.todo_channel_entity = self.channel_entity
+            return self.channel_entity
+        try:
+            self.todo_channel_entity = await self.client.get_entity(target_todo_id)
+            logger.info(f"Todo/Notes Channel resolved: {getattr(self.todo_channel_entity, 'title', target_todo_id)}")
+            return self.todo_channel_entity
+        except Exception as e:
+            logger.warning(f"Could not resolve TODO_CHANNEL_ID ({target_todo_id}): {e}. Using storage channel.")
+            self.todo_channel_entity = self.channel_entity
+            return self.channel_entity
+
     async def initialize(self) -> None:
         """Start the Telegram MTProto client or fall back to Demo mode."""
         if not is_telegram_configured():
@@ -644,22 +663,33 @@ class TelegramStorageClient:
 
     async def send_todo_message(self, title: str) -> Tuple[int, int]:
         """Send a new todo task to the Todo channel."""
-        if self.is_demo or not self.client:
+        if self.is_demo or not self.client or not self.is_connected:
             self._demo_counter += 1
             return self._demo_counter, TODO_CHANNEL_ID or -1009999999998
 
-        entity = self.todo_channel_entity or self.channel_entity
-        msg = await self.client.send_message(
-            entity=entity,
-            message=f"⏳ **[TODO]** {title}"
-        )
-        return msg.id, (TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID)
+        entity = await self.get_todo_entity() or self.channel_entity
+        if not entity:
+            self._demo_counter += 1
+            return self._demo_counter, TODO_CHANNEL_ID or -1009999999998
+
+        try:
+            msg = await self.client.send_message(
+                entity=entity,
+                message=f"⏳ **[TODO]** {title}"
+            )
+            return msg.id, (TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID)
+        except Exception as e:
+            logger.error(f"Failed to send todo message to Telegram: {e}")
+            self._demo_counter += 1
+            return self._demo_counter, TODO_CHANNEL_ID or -1009999999998
 
     async def update_todo_message(self, telegram_message_id: int, title: str, completed: bool) -> None:
         """Edit todo message in Telegram channel to reflect checkmark."""
-        if self.is_demo or not self.client:
+        if self.is_demo or not self.client or not self.is_connected:
             return
-        entity = self.todo_channel_entity or self.channel_entity
+        entity = await self.get_todo_entity() or self.channel_entity
+        if not entity:
+            return
         try:
             status_text = "✅ **[COMPLETED]**" if completed else "⏳ **[TODO]**"
             await self.client.edit_message(
@@ -672,16 +702,26 @@ class TelegramStorageClient:
 
     async def send_note_message(self, content: str) -> Tuple[int, int]:
         """Send a quick text note to the Todo/Notes channel."""
-        if self.is_demo or not self.client:
+        if self.is_demo or not self.client or not self.is_connected:
             self._demo_counter += 1
             return self._demo_counter, TODO_CHANNEL_ID or -1009999999998
 
-        entity = self.todo_channel_entity or self.channel_entity
-        msg = await self.client.send_message(
-            entity=entity,
-            message=f"📝 **[NOTE]**\n\n{content}"
-        )
-        return msg.id, (TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID)
+        entity = await self.get_todo_entity() or self.channel_entity
+        if not entity:
+            logger.warning("No channel entity available for note. Saving locally.")
+            self._demo_counter += 1
+            return self._demo_counter, TODO_CHANNEL_ID or -1009999999998
+
+        try:
+            msg = await self.client.send_message(
+                entity=entity,
+                message=f"📝 **[NOTE]**\n\n{content}"
+            )
+            return msg.id, (TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID)
+        except Exception as e:
+            logger.error(f"Failed to send note message to Telegram: {e}")
+            self._demo_counter += 1
+            return self._demo_counter, TODO_CHANNEL_ID or -1009999999998
 
     async def delete_message(self, channel_id: int, message_id: int, is_demo: bool = False, filename: Optional[str] = None) -> bool:
         """Deletes any message from Telegram (Storage, Software, or Todo channel)."""
