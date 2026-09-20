@@ -524,6 +524,60 @@ async def delete_note(note_id: str) -> Optional[Dict[str, Any]]:
         await db.commit()
         return note
 
+async def find_note_by_message_id(message_id: int) -> Optional[Dict[str, Any]]:
+    """Find a note record by either its primary telegram_message_id or any continuation extra_message_ids."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # 1. Direct match on primary ID
+        cursor = await db.execute("SELECT * FROM notes WHERE telegram_message_id = ?", (message_id,))
+        row = await cursor.fetchone()
+        if row:
+            extra_ids = [
+                int(x) for x in str(row["extra_message_ids"]).split(",") if x.strip().isdigit()
+            ] if "extra_message_ids" in row.keys() and row["extra_message_ids"] else []
+            return {
+                "id": row["id"],
+                "content": row["content"],
+                "telegram_message_id": row["telegram_message_id"],
+                "telegram_channel_id": row["telegram_channel_id"],
+                "is_demo": bool(row["is_demo"]),
+                "extra_message_ids": extra_ids
+            }
+        # 2. Match in continuation extra_message_ids
+        cursor = await db.execute("SELECT * FROM notes WHERE extra_message_ids IS NOT NULL AND extra_message_ids != ''")
+        rows = await cursor.fetchall()
+        for r in rows:
+            extra_ids = [
+                int(x) for x in str(r["extra_message_ids"]).split(",") if x.strip().isdigit()
+            ] if "extra_message_ids" in r.keys() and r["extra_message_ids"] else []
+            if message_id in extra_ids:
+                return {
+                    "id": r["id"],
+                    "content": r["content"],
+                    "telegram_message_id": r["telegram_message_id"],
+                    "telegram_channel_id": r["telegram_channel_id"],
+                    "is_demo": bool(r["is_demo"]),
+                    "extra_message_ids": extra_ids
+                }
+        return None
+
+async def find_todo_by_message_id(message_id: int) -> Optional[Dict[str, Any]]:
+    """Find a todo record by its telegram_message_id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM todos WHERE telegram_message_id = ?", (message_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "completed": bool(row["completed"]),
+            "telegram_message_id": row["telegram_message_id"],
+            "telegram_channel_id": row["telegram_channel_id"],
+            "is_demo": bool(row["is_demo"])
+        }
+
 # ==================== OTP & SECURITY LOCKOUT ====================
 
 def hash_otp_code(code: str) -> str:

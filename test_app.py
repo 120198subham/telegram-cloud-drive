@@ -756,6 +756,59 @@ async def test_multipart_note_unification():
         await client.delete(f"/api/notes/{created_id}")
 
 
+@pytest.mark.asyncio
+async def test_telegram_deletion_sync_and_cascade():
+    """Verify that deleting any part of a note on Telegram cascades and purges the note on web."""
+    from database import (
+        add_note,
+        find_note_by_message_id,
+        get_note_by_telegram_id,
+        add_todo,
+        find_todo_by_message_id,
+        get_todo,
+    )
+    from main import storage_client
+
+    # 1. Create a multi-part note in DB
+    note = await add_note(
+        content="Part 1 + Part 2 multi-part note",
+        telegram_message_id=801,
+        telegram_channel_id=-100123456,
+        is_demo=True,
+        extra_message_ids=[802, 803]
+    )
+
+    # Verify lookup works by both primary and continuation IDs
+    assert (await find_note_by_message_id(801)) is not None
+    assert (await find_note_by_message_id(802)) is not None
+    assert (await find_note_by_message_id(803)) is not None
+
+    # 2. Simulate Telegram deletion event for Part 2 (802)
+    affected = await storage_client.handle_deleted_messages([802])
+    assert affected == 1
+
+    # Verify note is completely removed from DB so it vanishes from the web portal
+    assert (await get_note_by_telegram_id(801)) is None
+    assert (await find_note_by_message_id(801)) is None
+
+    # 3. Create a todo and test its deletion sync from Telegram
+    todo = await add_todo(
+        title="Telegram synced todo item",
+        telegram_message_id=901,
+        telegram_channel_id=-100123456,
+        is_demo=True
+    )
+    assert (await find_todo_by_message_id(901)) is not None
+
+    # Simulate Telegram deletion event for the todo message
+    affected_todo = await storage_client.handle_deleted_messages([901])
+    assert affected_todo == 1
+
+    # Verify todo is removed from DB
+    assert (await get_todo(todo["id"])) is None
+
+
+
 
 
 

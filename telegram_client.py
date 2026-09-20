@@ -295,10 +295,120 @@ class TelegramStorageClient:
                 except Exception as e:
                     logger.error(f"Error handling incoming Telegram message: {e}")
 
+            @self.client.on(events.MessageDeleted)
+            async def on_messages_deleted(event):
+                try:
+                    deleted_ids = getattr(event, 'deleted_ids', None) or []
+                    if deleted_ids:
+                        await self.handle_deleted_messages(deleted_ids)
+                except Exception as e:
+                    logger.error(f"Error handling MessageDeleted event: {e}")
+
         except Exception as e:
             logger.error(f"Failed to connect to Telegram MTProto: {e}. Falling back to DEMO MODE.")
             self.is_connected = False
             self.is_demo = True
+
+    async def handle_deleted_messages(self, deleted_ids: List[int]) -> int:
+        """
+        Processes message deletions from Telegram:
+        1. If a note or any of its multi-part chunks was deleted on Telegram, delete the note from DB
+           and cascade-delete all remaining chunks from Telegram so no orphan parts remain.
+        2. If a todo was deleted on Telegram, delete the todo from DB.
+        """
+        from database import find_note_by_message_id, delete_note, find_todo_by_message_id, delete_todo
+        todo_entity = await self.get_todo_entity()
+        affected = 0
+
+        for mid in deleted_ids:
+            try:
+                # 1. Check note
+                note = await find_note_by_message_id(mid)
+                if note:
+                    logger.info(f"Telegram deletion detected for message {mid} belonging to note {note['id']}")
+                    await delete_note(note["id"])
+                    affected += 1
+
+                    # Cascade delete remaining parts from Telegram
+                    all_parts = [note["telegram_message_id"]] + note.get("extra_message_ids", [])
+                    remaining_parts = [p for p in all_parts if p and p not in deleted_ids]
+                    if remaining_parts and todo_entity and self.client and not note.get("is_demo"):
+                        try:
+                            await self.client.delete_messages(todo_entity, message_ids=remaining_parts)
+                            logger.info(f"Cascade deleted remaining note parts {remaining_parts} from Telegram")
+                        except Exception as cascade_err:
+                            logger.error(f"Failed to cascade delete remaining note parts {remaining_parts}: {cascade_err}")
+
+                # 2. Check todo
+                todo = await find_todo_by_message_id(mid)
+                if todo:
+                    logger.info(f"Telegram deletion detected for todo message {mid} ({todo['title']})")
+                    await delete_todo(todo["id"])
+                    affected += 1
+            except Exception as item_err:
+                logger.error(f"Error handling Telegram deletion for message {mid}: {item_err}")
+
+        return affected
+
+    async def reconcile_active_notes_and_todos(self) -> int:
+        """
+        Active polling reconciliation to catch manual Telegram deletions that Telegram
+        does not push to bots via real-time update events.
+        """
+        if self.is_demo or not self.client or not self.is_connected:
+            return 0
+
+        todo_entity = await self.get_todo_entity()
+        if not todo_entity:
+            return 0
+
+        from database import get_notes, delete_note, get_todos, delete_todo
+        purged = 0
+
+        try:
+            active_notes = await get_notes()
+            for note in active_notes:
+                if note.get("is_demo"):
+                    continue
+                all_parts = [note["telegram_message_id"]] + note.get("extra_message_ids", [])
+                valid_parts = [p for p in all_parts if p]
+                if not valid_parts:
+                    continue
+
+                check_msgs = await self.client.get_messages(todo_entity, ids=valid_parts)
+                deleted_parts = []
+                existing_parts = []
+                for p_id, m in zip(valid_parts, check_msgs):
+                    if not m or getattr(m, 'empty', False):
+                        deleted_parts.append(p_id)
+                    else:
+                        existing_parts.append(p_id)
+
+                if deleted_parts:
+                    logger.info(f"Reconciliation detected deleted part(s) {deleted_parts} for note {note['id']}")
+                    await delete_note(note["id"])
+                    purged += 1
+                    if existing_parts:
+                        try:
+                            await self.client.delete_messages(todo_entity, message_ids=existing_parts)
+                            logger.info(f"Purged remaining note parts {existing_parts} from Telegram")
+                        except Exception as del_err:
+                            logger.error(f"Error purging remaining parts {existing_parts}: {del_err}")
+
+            active_todos = await get_todos()
+            for todo in active_todos:
+                if todo.get("is_demo") or not todo.get("telegram_message_id"):
+                    continue
+                td_msg = await self.client.get_messages(todo_entity, ids=todo["telegram_message_id"])
+                if not td_msg or getattr(td_msg, 'empty', False):
+                    logger.info(f"Reconciliation detected deleted todo message {todo['telegram_message_id']}")
+                    await delete_todo(todo["id"])
+                    purged += 1
+
+        except Exception as e:
+            logger.error(f"Error during active notes/todos deletion reconciliation: {e}")
+
+        return purged
 
     async def sync_channel_messages(self, max_ids: int = 500) -> int:
         """
@@ -482,6 +592,14 @@ class TelegramStorageClient:
 
                 if not any_found and batch_start > 150:
                     break
+
+        # 4. Reconcile deleted notes and todos from Telegram
+        try:
+            purged = await self.reconcile_active_notes_and_todos()
+            if purged:
+                logger.info(f"Channel sync reconciled and purged {purged} deleted items.")
+        except Exception as recon_err:
+            logger.error(f"Error during channel sync deletion reconciliation: {recon_err}")
 
         logger.info(f"Channel sync completed: {imported} new items imported.")
         return imported

@@ -955,8 +955,13 @@ async def clear_completed():
 # ==================== SEND TEXT / NOTES (CHANNEL 2) ====================
 
 @app.get("/api/notes")
-async def list_notes():
-    """Retrieve saved text notes."""
+async def list_notes(prefetch: bool = False):
+    """Retrieve saved text notes, optionally reconciling Telegram deletions."""
+    if prefetch:
+        try:
+            await storage_client.reconcile_active_notes_and_todos()
+        except Exception:
+            pass
     notes = await get_notes()
     return {"notes": notes, "count": len(notes)}
 

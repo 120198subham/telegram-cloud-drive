@@ -2132,15 +2132,16 @@
             if (icon) icon.classList.add('animate-spin');
             try {
                 await fetch('/api/prefetch?force=true', { headers: getAuthHeaders() }).catch(() => {});
-                await fetchNotes();
+                await fetchNotes(true);
             } finally {
                 if (icon) icon.classList.remove('animate-spin');
             }
         }
 
-        async function fetchNotes() {
+        async function fetchNotes(prefetch = false) {
             try {
-                const res = await fetch('/api/notes', { headers: getAuthHeaders() });
+                const url = prefetch ? '/api/notes?prefetch=true' : '/api/notes';
+                const res = await fetch(url, { headers: getAuthHeaders() });
                 if (res.status === 401) { lockApp(); return; }
                 const data = await res.json();
                 const container = document.getElementById('notesContainer');
