@@ -185,6 +185,12 @@ class TelegramStorageClient:
                             abs(chat_id) == abs(CHANNEL_ID)
                         )
                     )
+                    is_todo_ch = (
+                        TODO_CHANNEL_ID != 0 and (
+                            chat_id == TODO_CHANNEL_ID or
+                            abs(chat_id) == abs(TODO_CHANNEL_ID)
+                        )
+                    )
 
                     if is_software and not self.software_channel_entity:
                         try:
@@ -192,6 +198,63 @@ class TelegramStorageClient:
                             logger.info(f"Dynamically adopted software channel entity from incoming update: {getattr(self.software_channel_entity, 'title', chat_id)}")
                         except Exception:
                             pass
+
+                    if is_todo_ch and not self.todo_channel_entity:
+                        try:
+                            self.todo_channel_entity = await event.get_chat()
+                            logger.info(f"Dynamically adopted todo/notes channel entity from incoming update: {getattr(self.todo_channel_entity, 'title', chat_id)}")
+                        except Exception:
+                            pass
+
+                    if is_todo_ch and msg.text:
+                        from database import get_existing_note_message_ids, get_existing_todo_message_ids, add_note, add_todo
+                        raw_text = msg.text.strip()
+                        date_str = msg.date.isoformat() if hasattr(msg, 'date') and msg.date else None
+                        target_cid = TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID
+
+                        if raw_text.startswith("⏳ **[TODO]**") or raw_text.startswith("⏳ [TODO]"):
+                            existing_todo_ids = await get_existing_todo_message_ids()
+                            if msg.id not in existing_todo_ids:
+                                clean_title = raw_text.replace("⏳ **[TODO]**", "").replace("⏳ [TODO]", "").strip()
+                                await add_todo(
+                                    title=clean_title,
+                                    telegram_message_id=msg.id,
+                                    telegram_channel_id=target_cid,
+                                    is_demo=False,
+                                    created_at=date_str,
+                                    completed=False
+                                )
+                                logger.info(f"Real-time todo received from Telegram: {clean_title}")
+                        elif raw_text.startswith("✅ **[COMPLETED]**") or raw_text.startswith("✅ [COMPLETED]"):
+                            existing_todo_ids = await get_existing_todo_message_ids()
+                            if msg.id not in existing_todo_ids:
+                                clean_title = raw_text.replace("✅ **[COMPLETED]**", "").replace("✅ [COMPLETED]", "").replace("~", "").strip()
+                                await add_todo(
+                                    title=clean_title,
+                                    telegram_message_id=msg.id,
+                                    telegram_channel_id=target_cid,
+                                    is_demo=False,
+                                    created_at=date_str,
+                                    completed=True
+                                )
+                                logger.info(f"Real-time completed todo received from Telegram: {clean_title}")
+                        else:
+                            existing_note_ids = await get_existing_note_message_ids()
+                            if msg.id not in existing_note_ids:
+                                clean_content = raw_text
+                                for prefix in ["📝 **[NOTE]**\n\n", "📝 **[NOTE]**", "📝 [NOTE]\n\n", "📝 [NOTE]"]:
+                                    if clean_content.startswith(prefix):
+                                        clean_content = clean_content[len(prefix):].strip()
+                                        break
+                                await add_note(
+                                    content=clean_content,
+                                    telegram_message_id=msg.id,
+                                    telegram_channel_id=target_cid,
+                                    is_demo=False,
+                                    created_at=date_str
+                                )
+                                logger.info(f"Real-time note received from Telegram: {clean_content[:50]}")
+                        return
 
                     if not (is_software or is_storage):
                         return
@@ -326,7 +389,82 @@ class TelegramStorageClient:
                 if not any_found and batch_start > 150:
                     break
 
-        logger.info(f"Channel sync completed: {imported} new files imported.")
+        # 3. Sync Todo & Notes channel (Channel 2)
+        todo_entity = await self.get_todo_entity()
+        target_todo_id = TODO_CHANNEL_ID if TODO_CHANNEL_ID != 0 else CHANNEL_ID
+        if todo_entity:
+            from database import get_existing_note_message_ids, get_existing_todo_message_ids, add_note, add_todo
+            existing_note_ids = await get_existing_note_message_ids()
+            existing_todo_ids = await get_existing_todo_message_ids()
+
+            for batch_start in range(1, max_ids + 1, 100):
+                batch_ids = list(range(batch_start, batch_start + 100))
+                try:
+                    msgs = await self.client.get_messages(todo_entity, ids=batch_ids)
+                except Exception as e:
+                    logger.error(f"Error fetching todo/notes batch {batch_start}: {e}")
+                    break
+
+                any_found = False
+                for msg in msgs:
+                    if not msg or not msg.text:
+                        continue
+                    any_found = True
+                    if msg.id in existing_note_ids or msg.id in existing_todo_ids:
+                        continue
+
+                    raw_text = msg.text.strip()
+                    date_str = msg.date.isoformat() if hasattr(msg, 'date') and msg.date else None
+
+                    if raw_text.startswith("⏳ **[TODO]**") or raw_text.startswith("⏳ [TODO]"):
+                        clean_title = raw_text.replace("⏳ **[TODO]**", "").replace("⏳ [TODO]", "").strip()
+                        await add_todo(
+                            title=clean_title,
+                            telegram_message_id=msg.id,
+                            telegram_channel_id=target_todo_id,
+                            is_demo=False,
+                            created_at=date_str,
+                            completed=False
+                        )
+                        existing_todo_ids.add(msg.id)
+                        imported += 1
+                    elif raw_text.startswith("✅ **[COMPLETED]**") or raw_text.startswith("✅ [COMPLETED]"):
+                        clean_title = (
+                            raw_text.replace("✅ **[COMPLETED]**", "")
+                            .replace("✅ [COMPLETED]", "")
+                            .replace("~", "")
+                            .strip()
+                        )
+                        await add_todo(
+                            title=clean_title,
+                            telegram_message_id=msg.id,
+                            telegram_channel_id=target_todo_id,
+                            is_demo=False,
+                            created_at=date_str,
+                            completed=True
+                        )
+                        existing_todo_ids.add(msg.id)
+                        imported += 1
+                    else:
+                        clean_content = raw_text
+                        for prefix in ["📝 **[NOTE]**\n\n", "📝 **[NOTE]**", "📝 [NOTE]\n\n", "📝 [NOTE]"]:
+                            if clean_content.startswith(prefix):
+                                clean_content = clean_content[len(prefix):].strip()
+                                break
+                        await add_note(
+                            content=clean_content,
+                            telegram_message_id=msg.id,
+                            telegram_channel_id=target_todo_id,
+                            is_demo=False,
+                            created_at=date_str
+                        )
+                        existing_note_ids.add(msg.id)
+                        imported += 1
+
+                if not any_found and batch_start > 150:
+                    break
+
+        logger.info(f"Channel sync completed: {imported} new items imported.")
         return imported
 
     # ==================== FILES, PHOTOS, VIDEOS ====================

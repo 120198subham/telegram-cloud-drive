@@ -186,6 +186,20 @@ async def get_existing_file_message_ids(channel_id: Optional[int] = None) -> set
         rows = await cursor.fetchall()
         return {r[0] for r in rows}
 
+async def get_existing_note_message_ids() -> set:
+    """Return set of all telegram_message_id values currently stored in notes table."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT telegram_message_id FROM notes WHERE telegram_message_id IS NOT NULL")
+        rows = await cursor.fetchall()
+        return {r[0] for r in rows}
+
+async def get_existing_todo_message_ids() -> set:
+    """Return set of all telegram_message_id values currently stored in todos table."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT telegram_message_id FROM todos WHERE telegram_message_id IS NOT NULL")
+        rows = await cursor.fetchall()
+        return {r[0] for r in rows}
+
 async def get_files(category: Optional[str] = None, search: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieve files filtered by category and search query."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -263,26 +277,30 @@ async def add_todo(
     title: str,
     telegram_message_id: int,
     telegram_channel_id: int,
-    is_demo: bool = False
+    is_demo: bool = False,
+    created_at: Optional[str] = None,
+    completed: bool = False
 ) -> Dict[str, Any]:
     """Create a new To-Do item."""
     todo_id = str(uuid.uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
+    if not created_at:
+        created_at = datetime.now(timezone.utc).isoformat()
+    completed_at = created_at if completed else None
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            INSERT INTO todos (id, title, completed, telegram_message_id, telegram_channel_id, is_demo, created_at)
-            VALUES (?, ?, 0, ?, ?, ?, ?)
-        """, (todo_id, title, telegram_message_id, telegram_channel_id, 1 if is_demo else 0, created_at))
+            INSERT INTO todos (id, title, completed, telegram_message_id, telegram_channel_id, is_demo, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (todo_id, title, 1 if completed else 0, telegram_message_id, telegram_channel_id, 1 if is_demo else 0, created_at, completed_at))
         await db.commit()
     return {
         "id": todo_id,
         "title": title,
-        "completed": False,
+        "completed": completed,
         "telegram_message_id": telegram_message_id,
         "telegram_channel_id": telegram_channel_id,
         "is_demo": is_demo,
         "created_at": created_at,
-        "completed_at": None
+        "completed_at": completed_at
     }
 
 async def get_todos(status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -372,11 +390,13 @@ async def add_note(
     content: str,
     telegram_message_id: int,
     telegram_channel_id: int,
-    is_demo: bool = False
+    is_demo: bool = False,
+    created_at: Optional[str] = None
 ) -> Dict[str, Any]:
     """Save a quick text note."""
     note_id = str(uuid.uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
+    if not created_at:
+        created_at = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT INTO notes (id, content, telegram_message_id, telegram_channel_id, is_demo, created_at)

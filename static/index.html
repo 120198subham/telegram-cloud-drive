@@ -497,7 +497,7 @@
                         <h3 class="font-semibold text-sm sm:text-base flex items-center" style="color: var(--text-primary);">
                             <i data-lucide="bookmark" class="w-4 h-4 mr-2 text-sky-500"></i> Saved Notes
                         </h3>
-                        <button onclick="fetchNotes()" class="p-1.5 rounded-lg border hover:opacity-80 transition" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);">
+                        <button id="refreshNotesBtn" onclick="refreshNotesWithSync()" class="p-1.5 rounded-lg border hover:opacity-80 transition" style="background-color: var(--subtle-bg); border-color: var(--subtle-border); color: var(--text-primary);" title="Refresh & Sync Notes">
                             <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
                         </button>
                     </div>
@@ -1219,7 +1219,9 @@
             // Automatic background prefetch on opening site
             fetch('/api/prefetch').then(res => res.json()).then(data => {
                 if (data && data.imported_files > 0) {
-                    fetchCategoryFiles(currentTab === 'softwares' ? 'software' : (currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file')));
+                    if (currentTab === 'notes') fetchNotes();
+                    else if (currentTab === 'todos') fetchTodos();
+                    else fetchCategoryFiles(currentTab === 'softwares' ? 'software' : (currentTab === 'photos' ? 'photo' : (currentTab === 'videos' ? 'video' : 'file')));
                 }
             }).catch(() => {});
         }
@@ -1310,8 +1312,18 @@
             else if (tab === 'files') fetchCategoryFiles('file', doPrefetch);
             else if (tab === 'photos') fetchCategoryFiles('photo', doPrefetch);
             else if (tab === 'videos') fetchCategoryFiles('video', doPrefetch);
-            else if (tab === 'notes') fetchNotes();
-            else if (tab === 'todos') fetchTodos();
+            else if (tab === 'notes') {
+                fetchNotes();
+                fetch('/api/prefetch').then(res => res.json()).then(data => {
+                    if (data && data.imported_files > 0) fetchNotes();
+                }).catch(() => {});
+            }
+            else if (tab === 'todos') {
+                fetchTodos();
+                fetch('/api/prefetch').then(res => res.json()).then(data => {
+                    if (data && data.imported_files > 0) fetchTodos();
+                }).catch(() => {});
+            }
 
             window.scrollTo({ top: 0, behavior: 'smooth' });
             refreshIcons();
@@ -2113,6 +2125,18 @@
         }
 
         // ==================== SEND TEXT / NOTES ====================
+
+        async function refreshNotesWithSync() {
+            const btn = document.getElementById('refreshNotesBtn');
+            const icon = btn ? btn.querySelector('i') : null;
+            if (icon) icon.classList.add('animate-spin');
+            try {
+                await fetch('/api/prefetch?force=true', { headers: getAuthHeaders() }).catch(() => {});
+                await fetchNotes();
+            } finally {
+                if (icon) icon.classList.remove('animate-spin');
+            }
+        }
 
         async function fetchNotes() {
             try {
