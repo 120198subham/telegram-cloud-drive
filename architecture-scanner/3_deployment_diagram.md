@@ -88,7 +88,7 @@ sequenceDiagram
 | `TELEGRAM_TODO_CHANNEL_ID` | `-100xxxxxxxxxx` | Private Todo & Notes Channel (Channel 2) |
 | `TELEGRAM_SOFTWARE_CHANNEL_ID` | `-100xxxxxxxxxx` | Public Software Channel (Channel 3) |
 | `TELEGRAM_OTP_CHANNEL_ID` | `-100xxxxxxxxxx` | Dedicated Security OTP Channel (Channel 4, 3-min auto-purge) |
-| `TELEGRAM_OWNER_ID` | `482820076` | Personal Telegram User ID (alerts & DM fallback) |
+| `TELEGRAM_OWNER_ID` | `XXXXXXXXX` | Personal Telegram User ID (alerts & DM fallback) |
 | `OTP_AUTO_DELETE_SECONDS` | `180` | Delay before Telegram deletes OTP messages (3 min) |
 | `MAX_FILE_SIZE` | `2147483648` | 2 GB limit (fixed) |
 | `TELEGRAM_SESSION_NAME` | `telegram_cloud_session` | Used as session filename prefix |
