@@ -6,10 +6,13 @@ import urllib.parse
 import hmac
 import hashlib
 import re
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
+
+logger = logging.getLogger("telegram_cloud")
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, status, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
@@ -230,7 +233,7 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     # Public Softwares download: ONLY allowed if SOFTWARE_CHANNEL_ID is active and file belongs to that channel
-    if path.startswith("/api/download/") and request.method == "GET":
+    if path.startswith("/api/download/") and request.method in ("GET", "HEAD"):
         file_id = path.split("/api/download/")[-1].split("?")[0]
         try:
             file_rec = await get_file(file_id)
@@ -244,10 +247,11 @@ async def auth_middleware(request: Request, call_next):
         except Exception:
             pass
 
-    # Validate HMAC-signed session token (from cookie or header)
+    # Validate HMAC-signed session token (from cookie, header, or query param for media players)
     cookie_auth = request.cookies.get("tg_auth", "")
     header_auth = request.headers.get("X-Session-Token", "")
-    token = cookie_auth or header_auth
+    query_auth = request.query_params.get("token", "")
+    token = cookie_auth or header_auth or query_auth
 
     if token and verify_signed_session_token(token):
         return await call_next(request)
@@ -627,6 +631,8 @@ async def get_system_status():
         "is_demo": storage_client.is_demo,
         "credentials_configured": is_telegram_configured(),
         "channels_connected": bool(storage_client.channel_entity is not None or storage_client.is_demo),
+        "aes_ni_accelerated": getattr(storage_client, "has_aes_ni", False),
+        "cryptg_version": getattr(storage_client, "cryptg_version", None),
     }
 
 @app.get("/api/prefetch")
@@ -741,60 +747,160 @@ async def upload_file(
                 "status": "uploading_to_server"
             }
 
-    total_uploaded = 0
+    import io
+    from telegram_client import PIXEL_VAULT_CHUNK_THRESHOLD
+
+    file_size_detected = 0
     try:
-        with open(temp_path, "wb") as buffer:
-            while chunk := await file.read(1024 * 1024):
-                total_uploaded += len(chunk)
-                if total_uploaded > MAX_FILE_SIZE:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"File exceeds maximum 2 GB limit."
-                    )
-                buffer.write(chunk)
+        if hasattr(file, "file") and hasattr(file.file, "seek") and hasattr(file.file, "tell"):
+            file.file.seek(0, io.SEEK_END)
+            file_size_detected = file.file.tell()
+            file.file.seek(0)
+    except Exception:
+        file_size_detected = 0
 
-        if uid:
-            upload_progress_tracker[uid]["status"] = "starting_telegram_sync"
-            upload_progress_tracker[uid]["total"] = total_uploaded
+    if not file_size_detected:
+        file_size_detected = getattr(file, "size", 0) or 0
 
-        last_time = time.time()
-        last_bytes = 0
+    total_uploaded = 0
+    if uid:
+        try:
+            from telemetry_recorder import recorder
+            recorder.start_session(uid, safe_filename, file_size_detected)
+        except Exception:
+            pass
 
-        def progress_cb(current, total):
-            nonlocal last_time, last_bytes
-            now = time.time()
-            dt = max(now - last_time, 0.001)
-            bytes_diff = max(current - last_bytes, 0)
-            speed = bytes_diff / dt  # bytes per sec
-            last_time = now
-            last_bytes = current
-            effective_total = total or total_uploaded
-            percent = round((current / effective_total) * 100, 1) if effective_total > 0 else 0
-            speed_mbs = round(speed / (1024 * 1024), 2)
-            speed_mbps = round((speed * 8) / (1024 * 1024), 2)
-            remaining_bytes = max(effective_total - current, 0)
-            eta_sec = round(remaining_bytes / max(speed, 1)) if speed > 10000 else 0
+    try:
+        is_multi_gb = file_size_detected > PIXEL_VAULT_CHUNK_THRESHOLD
+
+        if is_multi_gb:
+            # DIRECT INGESTION STREAMING (Approach 1): Zero-Disk Stage 1
+            # Avoid writing multi-GB file to disk. Stream directly from file.file into chunk packer!
+            total_uploaded = file_size_detected
+            if total_uploaded > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="File exceeds maximum 20 GB limit."
+                )
 
             if uid:
-                upload_progress_tracker[uid] = {
-                    "current": current,
-                    "total": effective_total,
-                    "percent": min(percent, 100.0),
-                    "speed_mbs": speed_mbs,
-                    "speed_mbps": speed_mbps,
-                    "eta_seconds": eta_sec,
-                    "status": "uploading_to_telegram"
-                }
+                upload_progress_tracker[uid]["status"] = "starting_telegram_sync"
+                upload_progress_tracker[uid]["total"] = total_uploaded
+                try:
+                    from telemetry_recorder import recorder
+                    recorder.complete_stage1(uid, total_uploaded)
+                except Exception:
+                    pass
 
-        # Upload to Storage Channel
-        msg_id, channel_id, tg_file_id = await storage_client.upload_file(
-            file_path=temp_path,
-            filename=safe_filename,
-            category=cat,
-            progress_callback=progress_cb if uid else None
-        )
+            last_time = time.time()
+            last_bytes = 0
 
-        # Save to SQLite
+            def progress_cb(current, total, status="uploading_to_telegram"):
+                nonlocal last_time, last_bytes
+                now = time.time()
+                dt = max(now - last_time, 0.001)
+                bytes_diff = max(current - last_bytes, 0)
+                speed = bytes_diff / dt  # bytes per sec
+                last_time = now
+                last_bytes = current
+                effective_total = total or total_uploaded
+                percent = round((current / effective_total) * 100, 1) if effective_total > 0 else 0
+                if status == "committing_telegram_file":
+                    percent = 99.5
+                    speed = 0.0
+                speed_mbs = round(speed / (1024 * 1024), 2)
+                speed_mbps = round((speed * 8) / (1024 * 1024), 2)
+                remaining_bytes = max(effective_total - current, 0)
+                eta_sec = round(remaining_bytes / max(speed, 1)) if speed > 10000 else 0
+
+                if uid:
+                    upload_progress_tracker[uid] = {
+                        "current": current,
+                        "total": effective_total,
+                        "percent": min(percent, 99.9 if status == "committing_telegram_file" else 100.0),
+                        "speed_mbs": speed_mbs,
+                        "speed_mbps": speed_mbps,
+                        "eta_seconds": eta_sec,
+                        "status": status
+                    }
+
+            # Direct stream into storage_client.upload_file
+            upload_result = await storage_client.upload_file(
+                file_obj=file.file,
+                filename=safe_filename,
+                category=cat,
+                progress_callback=progress_cb if uid else None,
+                upload_id=uid,
+                file_size=total_uploaded
+            )
+        else:
+            with open(temp_path, "wb") as buffer:
+                while chunk := await file.read(1024 * 1024):
+                    total_uploaded += len(chunk)
+                    if total_uploaded > MAX_FILE_SIZE:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                            detail="File exceeds maximum 20 GB limit."
+                        )
+                    buffer.write(chunk)
+
+            if uid:
+                upload_progress_tracker[uid]["status"] = "starting_telegram_sync"
+                upload_progress_tracker[uid]["total"] = total_uploaded
+                try:
+                    from telemetry_recorder import recorder
+                    recorder.complete_stage1(uid, total_uploaded)
+                except Exception:
+                    pass
+
+            last_time = time.time()
+            last_bytes = 0
+
+            def progress_cb(current, total, status="uploading_to_telegram"):
+                nonlocal last_time, last_bytes
+                now = time.time()
+                dt = max(now - last_time, 0.001)
+                bytes_diff = max(current - last_bytes, 0)
+                speed = bytes_diff / dt  # bytes per sec
+                last_time = now
+                last_bytes = current
+                effective_total = total or total_uploaded
+                percent = round((current / effective_total) * 100, 1) if effective_total > 0 else 0
+                if status == "committing_telegram_file":
+                    percent = 99.5
+                    speed = 0.0
+                speed_mbs = round(speed / (1024 * 1024), 2)
+                speed_mbps = round((speed * 8) / (1024 * 1024), 2)
+                remaining_bytes = max(effective_total - current, 0)
+                eta_sec = round(remaining_bytes / max(speed, 1)) if speed > 10000 else 0
+
+                if uid:
+                    upload_progress_tracker[uid] = {
+                        "current": current,
+                        "total": effective_total,
+                        "percent": min(percent, 99.9 if status == "committing_telegram_file" else 100.0),
+                        "speed_mbs": speed_mbs,
+                        "speed_mbps": speed_mbps,
+                        "eta_seconds": eta_sec,
+                        "status": status
+                    }
+
+            # Upload to Storage Channel (with multi-GB Pixel Vault PNG chunking support)
+            upload_result = await storage_client.upload_file(
+                file_path=temp_path,
+                filename=safe_filename,
+                category=cat,
+                progress_callback=progress_cb if uid else None,
+                upload_id=uid,
+                file_size=total_uploaded
+            )
+
+        msg_id, channel_id, tg_file_id = upload_result[0], upload_result[1], upload_result[2]
+        chunk_msg_ids = upload_result[3] if len(upload_result) > 3 else []
+        enc_meta = upload_result[4] if len(upload_result) > 4 else {}
+
+        import json
+        # Save to SQLite: Only original file is registered, chunks are managed internally by backend
         file_record = await add_file(
             filename=safe_filename,
             size=total_uploaded,
@@ -803,8 +909,19 @@ async def upload_file(
             telegram_channel_id=channel_id,
             telegram_file_id=tg_file_id,
             is_demo=storage_client.is_demo,
-            category=cat
+            category=cat,
+            extra_message_ids=json.dumps(chunk_msg_ids) if chunk_msg_ids else "",
+            encryption_meta=json.dumps(enc_meta) if enc_meta else "",
+            is_encrypted=bool(enc_meta)
         )
+
+        telemetry_analysis = {}
+        if uid:
+            try:
+                from telemetry_recorder import recorder
+                telemetry_analysis = recorder.complete_session(uid)
+            except Exception:
+                pass
 
         if uid:
             upload_progress_tracker[uid] = {
@@ -814,10 +931,25 @@ async def upload_file(
                 "speed_mbs": 0.0,
                 "speed_mbps": 0.0,
                 "eta_seconds": 0,
-                "status": "completed"
+                "status": "completed",
+                "telemetry": telemetry_analysis
             }
 
-        return file_record
+        return {**file_record, "telemetry": telemetry_analysis}
+
+    except Exception as e:
+        logger.error(f"[UPLOAD ERROR] {safe_filename} failed: {e}", exc_info=True)
+        if uid:
+            upload_progress_tracker[uid] = {
+                "current": 0,
+                "total": total_uploaded or file_size_detected,
+                "percent": 0.0,
+                "speed_mbs": 0.0,
+                "speed_mbps": 0.0,
+                "eta_seconds": 0,
+                "status": f"error: {str(e)}"
+            }
+        raise
 
     finally:
         if temp_path.exists():
@@ -826,31 +958,188 @@ async def upload_file(
             except Exception:
                 pass
 
-@app.get("/api/download/{file_id}")
-async def download_file(file_id: str):
-    """Stream download file chunks directly from Telegram."""
+@app.api_route("/api/download/{file_id}", methods=["GET", "HEAD"])
+async def download_file(file_id: str, request: Request, dl_id: Optional[str] = None):
+    """Stream download file chunks directly from Telegram (auto-decrypts Pixel Vault PNG chunks) with live progress tracking and HTTP Range support."""
     file_record = await get_file(file_id)
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
 
-    try:
-        chunk_stream = storage_client.download_file_stream(
-            telegram_message_id=file_record["telegram_message_id"],
-            filename=file_record["filename"],
-            telegram_channel_id=file_record.get("telegram_channel_id"),
-            is_demo=file_record["is_demo"]
-        )
+    download_id = dl_id if (dl_id and _UPLOAD_ID_PATTERN.match(dl_id)) else f"dl_{secrets.token_hex(8)}"
+    file_size = file_record.get("size", 0) or 0
+    file_etag = f'"{file_record["id"]}-{file_size}"'
 
-        quoted_filename = urllib.parse.quote(file_record["filename"])
-        headers = {
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quoted_filename}",
-            "Content-Length": str(file_record["size"]),
-            "Accept-Ranges": "bytes"
+    # Parse HTTP Range header if present (handles Chrome auto-resume / EOF probe gracefully)
+    range_header = request.headers.get("range", "").strip() if request else ""
+    start_byte = 0
+    end_byte = file_size - 1 if file_size > 0 else 0
+    is_range_request = False
+
+    if range_header:
+        range_match = re.match(r"^bytes=(\d+)-(\d+)?$", range_header)
+        if range_match:
+            req_start = int(range_match.group(1))
+            req_end = int(range_match.group(2)) if range_match.group(2) else (file_size - 1)
+            # If client requests a range at or beyond the file size (e.g. Chrome EOF probe bytes=4893900800-)
+            if file_size > 0 and req_start >= file_size:
+                logger.info(f"[DOWNLOAD] Range unsatisfiable probe: req_start={req_start} >= file_size={file_size}. Returning 416.")
+                return Response(
+                    status_code=416,
+                    headers={
+                        "Content-Range": f"bytes */{file_size}",
+                        "Accept-Ranges": "bytes",
+                        "ETag": file_etag,
+                    }
+                )
+            start_byte = max(0, req_start)
+            end_byte = min(req_end, file_size - 1) if file_size > 0 else req_start
+            is_range_request = True
+
+    content_length = (end_byte - start_byte + 1) if file_size > 0 else 0
+
+    # Initialize download progress metrics (preserve completed status if client probes after 100%)
+    existing_tracker = upload_progress_tracker.get(download_id)
+    if not existing_tracker or existing_tracker.get("status") != "completed":
+        if len(upload_progress_tracker) >= _UPLOAD_TRACKER_MAX:
+            oldest_uid = next(iter(upload_progress_tracker))
+            del upload_progress_tracker[oldest_uid]
+
+        upload_progress_tracker[download_id] = {
+            "current": start_byte,
+            "total": file_size,
+            "percent": round((start_byte / file_size) * 100, 1) if file_size > 0 else 0.0,
+            "speed_mbs": 0.0,
+            "speed_mbps": 0.0,
+            "eta_seconds": 0,
+            "status": "fetching_chunks_from_telegram"
         }
 
+    raw_fname = file_record["filename"]
+    safe_ascii_name = re.sub(r'[^a-zA-Z0-9_\-\. ]', '_', raw_fname)
+    quoted_filename = urllib.parse.quote(raw_fname)
+    media_type = file_record.get("mime_type") or "application/octet-stream"
+    if raw_fname.lower().endswith(".iso"):
+        media_type = "application/x-iso9660-image"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_ascii_name}"; filename*=UTF-8\'\'{quoted_filename}',
+        "Content-Length": str(content_length),
+        "Accept-Ranges": "bytes",
+        "ETag": file_etag,
+        "Last-Modified": "Wed, 24 Sep 2026 12:00:00 GMT",
+        "Cache-Control": "public, max-age=31536000, immutable"
+    }
+    status_code = 200
+    if is_range_request:
+        status_code = 206
+        headers["Content-Range"] = f"bytes {start_byte}-{end_byte}/{file_size}"
+
+    # Handle HEAD requests cleanly without initiating Telegram chunks stream
+    if request.method == "HEAD":
+        return Response(
+            status_code=status_code,
+            media_type=media_type,
+            headers=headers
+        )
+
+    try:
+        from telemetry_recorder import recorder
+        recorder.start_download_session(download_id, file_record["filename"], file_size)
+    except Exception:
+        pass
+
+    try:
+        # If file was chunked and encrypted with Pixel Vault, stream & decrypt seamlessly
+        if file_record.get("is_encrypted") and file_record.get("encryption_meta"):
+            raw_stream = storage_client.download_pixel_vault_stream(file_record, download_id=download_id)
+        else:
+            raw_stream = storage_client.download_file_stream(
+                telegram_message_id=file_record["telegram_message_id"],
+                filename=file_record["filename"],
+                telegram_channel_id=file_record.get("telegram_channel_id"),
+                is_demo=file_record["is_demo"]
+            )
+
+        async def telemetry_wrapped_stream():
+            sent_bytes = 0
+            bytes_skipped = 0
+            total_to_send = content_length
+            last_time = time.time()
+            last_bytes = 0
+            try:
+                async for chunk in raw_stream:
+                    # Skip bytes before start_byte if resuming mid-stream
+                    if bytes_skipped + len(chunk) <= start_byte:
+                        bytes_skipped += len(chunk)
+                        continue
+                    elif bytes_skipped < start_byte:
+                        offset = start_byte - bytes_skipped
+                        bytes_skipped = start_byte
+                        chunk = chunk[offset:]
+
+                    # Bound by total_to_send if an end_byte was specified
+                    if total_to_send > 0 and (sent_bytes + len(chunk) > total_to_send):
+                        chunk = chunk[:total_to_send - sent_bytes]
+
+                    if not chunk:
+                        continue
+
+                    sent_bytes += len(chunk)
+                    now = time.time()
+                    dt = max(now - last_time, 0.001)
+                    if dt >= 0.25:
+                        bytes_diff = max(sent_bytes - last_bytes, 0)
+                        speed_mbs = round((bytes_diff / (1024 * 1024)) / dt, 2)
+                        speed_mbps = round((bytes_diff * 8 / (1024 * 1024)) / dt, 2)
+                        last_time = now
+                        last_bytes = sent_bytes
+                        rem_bytes = max(total_to_send - sent_bytes, 0)
+                        eta_sec = round(rem_bytes / max(bytes_diff / dt, 1)) if bytes_diff > 10000 else 0
+                        pct = round(((start_byte + sent_bytes) / file_size) * 100, 1) if file_size > 0 else 0.0
+                        upload_progress_tracker[download_id] = {
+                            "current": start_byte + sent_bytes,
+                            "total": file_size,
+                            "percent": min(pct, 99.9),
+                            "speed_mbs": speed_mbs,
+                            "speed_mbps": speed_mbps,
+                            "eta_seconds": eta_sec,
+                            "status": "decrypting_and_streaming"
+                        }
+                    yield chunk
+                    if total_to_send > 0 and sent_bytes >= total_to_send:
+                        break
+
+                upload_progress_tracker[download_id] = {
+                    "current": file_size,
+                    "total": file_size,
+                    "percent": 100.0,
+                    "speed_mbs": 0.0,
+                    "speed_mbps": 0.0,
+                    "eta_seconds": 0,
+                    "status": "completed"
+                }
+            except Exception as stream_err:
+                upload_progress_tracker[download_id] = {
+                    "current": start_byte + sent_bytes,
+                    "total": file_size,
+                    "percent": 0.0,
+                    "speed_mbs": 0.0,
+                    "speed_mbps": 0.0,
+                    "eta_seconds": 0,
+                    "status": f"error: {stream_err}"
+                }
+                raise
+            finally:
+                try:
+                    from telemetry_recorder import recorder
+                    recorder.complete_download_session(download_id)
+                except Exception:
+                    pass
+
         return StreamingResponse(
-            chunk_stream,
-            media_type=file_record["mime_type"] or "application/octet-stream",
+            telemetry_wrapped_stream(),
+            status_code=status_code,
+            media_type=media_type,
             headers=headers
         )
     except FileNotFoundError:
@@ -860,17 +1149,37 @@ async def download_file(file_id: str):
 
 @app.delete("/api/files/{file_id}")
 async def delete_file_endpoint(file_id: str):
-    """Delete file from DB and remove document message from Telegram Channel 1."""
+    """Delete file from DB and remove document message(s) from Telegram Channel."""
     file_record = await get_file(file_id)
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
 
+    # Delete primary message
     await storage_client.delete_message(
         channel_id=file_record["telegram_channel_id"],
         message_id=file_record["telegram_message_id"],
         is_demo=file_record["is_demo"],
         filename=file_record["filename"]
     )
+
+    # Delete any additional encrypted PNG chunk messages
+    extra_ids_raw = file_record.get("extra_message_ids")
+    if extra_ids_raw:
+        try:
+            import json
+            extra_ids = json.loads(extra_ids_raw) if isinstance(extra_ids_raw, str) else extra_ids_raw
+            if isinstance(extra_ids, list):
+                for mid in extra_ids:
+                    if mid != file_record["telegram_message_id"]:
+                        await storage_client.delete_message(
+                            channel_id=file_record["telegram_channel_id"],
+                            message_id=mid,
+                            is_demo=file_record["is_demo"],
+                            filename=f"chunk_{mid}.png"
+                        )
+        except Exception:
+            pass
+
     await delete_file(file_id)
     return {"success": True, "message": f"'{file_record['filename']}' deleted successfully."}
 

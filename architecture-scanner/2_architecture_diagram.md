@@ -14,14 +14,16 @@ graph TB
         UVICORN["Uvicorn ASGI Server\nPort = $PORT (auto-assigned by Render)"]
         FASTAPI["FastAPI Application\nmain.py\nRoutes + Auth Middleware + Progress Tracker"]
         TG_CLIENT["TelegramStorageClient\ntelegram_client.py\nMTProto Engine + 6-Worker Upload/Download"]
+        PIXEL_VAULT["Pixel Vault Engine\npixel_vault.py\nAES-256-CTR PNG Chunking & Streaming Decrypt"]
+        TELEMETRY["Telemetry & Speed Engine\ntelemetry_recorder.py & speed_tracker.py\nDual-Track Telemetry (< 15 MB RAM)"]
         DB["SQLite3 — cloud_storage.db\naiosqlite async driver\nTables: files, todos, notes, otp_sessions"]
-        CONFIG["config.py\nEnvironment Variables Loader"]
-        DATABASE["database.py\nCRUD Functions + OTP Session Management"]
+        CONFIG["config.py\nEnvironment Variables Loader\nMAX_FILE_SIZE = 20 GB"]
+        DATABASE["database.py\nCRUD Functions + Encryption Meta + OTP"]
         STATIC["static/\nindex.html — Web UI\nfavicon.svg — App Icon"]
     end
 
     subgraph TELEGRAM["📡 Telegram Infrastructure (External)"]
-        CH1["Channel 1\nFiles, Photos, Videos Vault\nUp to 2 GB per file"]
+        CH1["Channel 1\nFiles, Photos, Videos & Multi-GB Vault\nUp to 20 GB per file"]
         CH2["Channel 2\nTo-Do Tasks and Text Notes"]
         CH3["Channel 3\nSoftware and Installers\nPublic Downloads"]
         CH4["Channel 4\nDedicated Security & OTP Vault\n3-Minute Auto-Purge"]
@@ -34,11 +36,14 @@ graph TB
         REPO["Repository\n120198subham/telegram-cloud-drive\nCI/CD trigger on git push to main"]
     end
 
-    CLIENT -->|"HTTPS REST API\nJSON + Multipart"| UVICORN
+    CLIENT -->|"HTTPS REST API / Range Streaming\nJSON + Multipart + RFC 7233"| UVICORN
     UVICORN --> FASTAPI
     FASTAPI --> TG_CLIENT
+    FASTAPI --> PIXEL_VAULT
+    FASTAPI --> TELEMETRY
     FASTAPI --> DATABASE
     DATABASE --> DB
+    TG_CLIENT --> PIXEL_VAULT
     TG_CLIENT --> CONFIG
     FASTAPI --> CONFIG
     FASTAPI --> STATIC
@@ -105,58 +110,60 @@ graph LR
 
 ---
 
-## MTProto Upload Architecture (6-Worker Pool)
+## MTProto Upload Architecture (Pixel Vault Multi-GB & 6-Worker Pool)
 
 ```mermaid
 graph TD
-    FILE["Local Temp File\n2 GB max"]
+    FILE["Direct Ingestion Stream\nUp to 20 GB"]
+    SIZE_EVAL{"Size > 1.9 GB?"}
+    PV_SPLIT["Pixel Vault Engine\nSplit into 1.0 GB chunks\nAES-256-CTR Encrypt & PNG Header"]
+    STD_FILE["Standard Stream\n≤ 1.9 GB"]
     SPLIT["Split into 512 KB parts\npart_count = ceil size / 512KB"]
     QUEUE["asyncio.Queue\npart_0, part_1, ..., part_N"]
-    W1["Worker 1\nSeek + Read\nSaveBigFilePartRequest"]
-    W2["Worker 2\nSeek + Read\nSaveBigFilePartRequest"]
-    W3["Worker 3\nSeek + Read\nSaveBigFilePartRequest"]
-    W4["Worker 4\nSeek + Read\nSaveBigFilePartRequest"]
-    W5["Worker 5\nSeek + Read\nSaveBigFilePartRequest"]
-    W6["Worker 6\nSeek + Read\nSaveBigFilePartRequest"]
-    RETRY["3x Retry on\nTransient Failures"]
-    PROGRESS["Progress Callback\nUpdate upload_progress_tracker\nkB/s, Mbps, ETA"]
-    RESULT["InputFileBig\nfile_id + part_count"]
-    SENDFILE["client.send_file\nPost message to Channel"]
+    W1["Worker 1\nSeek + Read / Buffer\nSaveBigFilePartRequest"]
+    W2["Worker 2\nSeek + Read / Buffer\nSaveBigFilePartRequest"]
+    W3["Worker 3\nSeek + Read / Buffer\nSaveBigFilePartRequest"]
+    W4["Worker 4\nSeek + Read / Buffer\nSaveBigFilePartRequest"]
+    W5["Worker 5\nSeek + Read / Buffer\nSaveBigFilePartRequest"]
+    W6["Worker 6\nSeek + Read / Buffer\nSaveBigFilePartRequest"]
+    BACKOFF["8-Stage Exponential Backoff\nmin(0.5 * 1.5^attempt, 6.0)"]
+    TELEMETRY["Telemetry & Speed Tracker\nBounded < 15 MB RAM\nSpeed, Mbps, ETA"]
+    RESULT["InputFileBig Handles\nPrimary + Extra Chunks"]
+    SENDFILE["client.send_file\nPost Messages to Channel"]
 
-    FILE --> SPLIT --> QUEUE
+    FILE --> SIZE_EVAL
+    SIZE_EVAL -->|Yes| PV_SPLIT --> SPLIT
+    SIZE_EVAL -->|No| STD_FILE --> SPLIT
+    SPLIT --> QUEUE
     QUEUE --> W1 & W2 & W3 & W4 & W5 & W6
-    W1 & W2 & W3 & W4 & W5 & W6 --> RETRY --> PROGRESS
-    PROGRESS --> RESULT --> SENDFILE
+    W1 & W2 & W3 & W4 & W5 & W6 --> BACKOFF --> TELEMETRY
+    TELEMETRY --> RESULT --> SENDFILE
 ```
 
 ---
 
-## MTProto Download Architecture (6-Worker Sliding Window)
+## MTProto Download Architecture (RFC 7233 Resumption & Decryption Stream)
 
 ```mermaid
 graph TD
-    MSG["Telegram Message\nget_messages"]
-    INFO["Extract location + dc_id"]
-    DC_CHECK{"dc_id != session DC?"}
-    BORROW["borrow_exported_sender\nfor foreign DC"]
-    DEFAULT["Use default _sender"]
+    REQ["HTTP GET / HEAD Request\nRFC 7233 Range: bytes=start-end"]
+    HEAD_CHECK{"HEAD Request?"}
+    HEAD_RESP["Instant 200 OK\nAccept-Ranges, ETag, Last-Modified"]
+    RANGE_CHECK{"Valid Range?"}
+    ERR_416["HTTP 416\nRange Not Satisfiable"]
+    ENC_CHECK{"File is_encrypted?"}
+    PV_ENGINE["download_pixel_vault_stream\nMap Byte Offset to 1.0GB Chunk\nAES-256-CTR Counter Resync\nLookahead Prefetch Queue"]
+    STD_ENGINE["fast_download_stream\n6 Parallel MTProto Workers\n512 KB Part Fetching"]
     QUEUE["Bounded asyncio.Queue\nmaxsize = workers × 2 = 12"]
-    FEEDER["Feeder coroutine\nEnqueues 0, 1, 2, ... N"]
-    W1["Worker 1\nGetFileRequest\noffset = idx × 512KB"]
-    W2["Worker 2"]
-    W3["Worker 3"]
-    W4["Worker 4"]
-    W5["Worker 5"]
-    W6["Worker 6"]
-    COND["asyncio.Condition\ncompleted dict"]
-    SEQ["Sequential Yield\ncurrent_part = 0, 1, 2, ...\nBlocks until next part ready"]
-    STREAM["StreamingResponse\nHTTP chunked transfer\nto browser"]
+    COND["asyncio.Condition\nSequential Reassembly"]
+    STREAM["StreamingResponse (HTTP 206 / 200)\nChunked transfer to browser"]
 
-    MSG --> INFO --> DC_CHECK
-    DC_CHECK -->|Yes| BORROW
-    DC_CHECK -->|No| DEFAULT
-    BORROW & DEFAULT --> QUEUE
-    FEEDER --> QUEUE
-    QUEUE --> W1 & W2 & W3 & W4 & W5 & W6
-    W1 & W2 & W3 & W4 & W5 & W6 --> COND --> SEQ --> STREAM
+    REQ --> HEAD_CHECK
+    HEAD_CHECK -->|Yes| HEAD_RESP
+    HEAD_CHECK -->|No| RANGE_CHECK
+    RANGE_CHECK -->|Invalid| ERR_416
+    RANGE_CHECK -->|Valid| ENC_CHECK
+    ENC_CHECK -->|Yes: Pixel Vault| PV_ENGINE --> STREAM
+    ENC_CHECK -->|No: Plain MTProto| STD_ENGINE
+    STD_ENGINE --> QUEUE --> COND --> STREAM
 ```

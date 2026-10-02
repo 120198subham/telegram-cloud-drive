@@ -19,19 +19,52 @@ def format_size(size_bytes: int) -> str:
 def detect_category(filename: str, mime_type: Optional[str] = None) -> str:
     """Detect if a file is a photo, video, software, or general file."""
     ext = filename.split(".")[-1].lower() if "." in filename else ""
-    if ext in ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico", "heic", "tiff"]:
+    mime = (mime_type or "").lower().strip()
+
+    # Archives explicitly categorized as 'file'
+    archive_exts = {"zip", "rar", "7z", "tar", "gz", "bz2", "xz"}
+    archive_mimes = {
+        "application/zip",
+        "application/x-zip-compressed",
+        "application/x-rar-compressed",
+        "application/vnd.rar",
+        "application/x-7z-compressed",
+        "application/x-tar",
+        "application/gzip",
+        "application/x-gzip",
+        "application/x-bzip2",
+        "application/x-xz",
+        "application/x-compressed",
+    }
+    if ext in archive_exts or mime in archive_mimes:
+        return "file"
+
+    # Photo files
+    photo_exts = {"jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico", "heic", "tiff"}
+    if ext in photo_exts or mime.startswith("image/"):
         return "photo"
-    if ext in ["mp4", "mkv", "mov", "avi", "webm", "flv", "wmv", "3gp", "m4v"]:
+
+    # Video files (.mp4, .mkv, .mov, .avi, .webm, .flv, .wmv, .3gp, .m4v, .ts or video/* mime)
+    video_exts = {"mp4", "mkv", "mov", "avi", "webm", "flv", "wmv", "3gp", "m4v", "ts"}
+    if ext in video_exts or mime.startswith("video/"):
         return "video"
-    if ext in ["exe", "apk", "msi", "dmg", "pkg", "deb", "rpm", "iso", "appimage", "zip", "rar", "7z", "tar", "gz"]:
+
+    # Software files (.exe, .apk, .msi, .dmg, .pkg, .deb, .rpm, .iso, .appimage, .bin, .bat, .cmd or software mime)
+    software_exts = {"exe", "apk", "msi", "dmg", "pkg", "deb", "rpm", "iso", "appimage", "bin", "bat", "cmd"}
+    software_mimes = {
+        "application/x-msdownload",
+        "application/vnd.android.package-archive",
+        "application/x-iso9660-image",
+        "application/x-executable",
+        "application/x-msi",
+        "application/x-apple-diskimage",
+        "application/x-debian-package",
+        "application/x-redhat-package-manager",
+    }
+    if ext in software_exts or mime in software_mimes:
         return "software"
-    if mime_type:
-        if mime_type.startswith("image/"):
-            return "photo"
-        if mime_type.startswith("video/"):
-            return "video"
-        if mime_type in ["application/x-msdownload", "application/vnd.android.package-archive", "application/x-iso9660-image"]:
-            return "software"
+
+    # Default all other files to 'file'
     return "file"
 
 async def init_db() -> None:
@@ -52,11 +85,17 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
-        # Try adding category column if older table exists
-        try:
-            await db.execute("ALTER TABLE files ADD COLUMN category TEXT DEFAULT 'file'")
-        except Exception:
-            pass  # Already exists
+        # Try adding category and encryption columns if older table exists
+        for col_def in [
+            "category TEXT DEFAULT 'file'",
+            "extra_message_ids TEXT DEFAULT ''",
+            "encryption_meta TEXT DEFAULT ''",
+            "is_encrypted INTEGER DEFAULT 0"
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE files ADD COLUMN {col_def}")
+            except Exception:
+                pass  # Already exists
 
         await db.execute("CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_at DESC)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_files_category ON files(category)")
@@ -143,24 +182,28 @@ async def add_file(
     telegram_channel_id: int,
     telegram_file_id: Optional[str] = None,
     is_demo: bool = False,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    extra_message_ids: Optional[str] = "",
+    encryption_meta: Optional[str] = "",
+    is_encrypted: bool = False
 ) -> Dict[str, Any]:
     """Insert a new file record into the database."""
     file_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
     cat = category or detect_category(filename, mime_type)
-    
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT INTO files (
                 id, filename, size, mime_type, category,
                 telegram_message_id, telegram_channel_id, telegram_file_id,
-                is_demo, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_demo, created_at, extra_message_ids, encryption_meta, is_encrypted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             file_id, filename, size, mime_type, cat,
             telegram_message_id, telegram_channel_id, telegram_file_id,
-            1 if is_demo else 0, created_at
+            1 if is_demo else 0, created_at,
+            extra_message_ids or "", encryption_meta or "", 1 if is_encrypted else 0
         ))
         await db.commit()
 
@@ -175,7 +218,10 @@ async def add_file(
         "telegram_channel_id": telegram_channel_id,
         "telegram_file_id": telegram_file_id,
         "is_demo": is_demo,
-        "created_at": created_at
+        "created_at": created_at,
+        "extra_message_ids": extra_message_ids or "",
+        "encryption_meta": encryption_meta or "",
+        "is_encrypted": is_encrypted
     }
 
 async def get_existing_file_message_ids(channel_id: Optional[int] = None) -> set:
@@ -220,7 +266,7 @@ async def get_files(category: Optional[str] = None, search: Optional[str] = None
     """Retrieve files filtered by category and search query."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        
+
         conditions = []
         params = []
         if category and category != "all":
@@ -232,12 +278,12 @@ async def get_files(category: Optional[str] = None, search: Optional[str] = None
         if search:
             conditions.append("filename LIKE ?")
             params.append(f"%{search}%")
-            
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"SELECT * FROM files {where_clause} ORDER BY created_at DESC"
         cursor = await db.execute(query, tuple(params))
         rows = await cursor.fetchall()
-        
+
         files_list = []
         for row in rows:
             files_list.append({
@@ -251,7 +297,10 @@ async def get_files(category: Optional[str] = None, search: Optional[str] = None
                 "telegram_channel_id": row["telegram_channel_id"],
                 "telegram_file_id": row["telegram_file_id"],
                 "is_demo": bool(row["is_demo"]),
-                "created_at": row["created_at"]
+                "created_at": row["created_at"],
+                "extra_message_ids": row["extra_message_ids"] if "extra_message_ids" in row.keys() else "",
+                "encryption_meta": row["encryption_meta"] if "encryption_meta" in row.keys() else "",
+                "is_encrypted": bool(row["is_encrypted"]) if "is_encrypted" in row.keys() else False
             })
         return files_list
 
@@ -274,8 +323,29 @@ async def get_file(file_id: str) -> Optional[Dict[str, Any]]:
             "telegram_channel_id": row["telegram_channel_id"],
             "telegram_file_id": row["telegram_file_id"],
             "is_demo": bool(row["is_demo"]),
-            "created_at": row["created_at"]
+            "created_at": row["created_at"],
+            "extra_message_ids": row["extra_message_ids"] if "extra_message_ids" in row.keys() else "",
+            "encryption_meta": row["encryption_meta"] if "encryption_meta" in row.keys() else "",
+            "is_encrypted": bool(row["is_encrypted"]) if "is_encrypted" in row.keys() else False
         }
+
+async def update_file_encryption_meta(file_id: str, encryption_meta: str, is_encrypted: bool = True) -> bool:
+    """Update encryption metadata and flag for a file record."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE files SET encryption_meta = ?, is_encrypted = ? WHERE id = ?
+        """, (encryption_meta, 1 if is_encrypted else 0, file_id))
+        await db.commit()
+    return True
+
+async def update_file_extra_messages(file_id: str, extra_message_ids: str) -> bool:
+    """Update extra_message_ids list for multi-chunk file uploads."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE files SET extra_message_ids = ? WHERE id = ?
+        """, (extra_message_ids, file_id))
+        await db.commit()
+    return True
 
 async def delete_file(file_id: str) -> Optional[Dict[str, Any]]:
     """Delete a file record from the database and return its metadata."""
@@ -577,6 +647,22 @@ async def find_todo_by_message_id(message_id: int) -> Optional[Dict[str, Any]]:
             "telegram_channel_id": row["telegram_channel_id"],
             "is_demo": bool(row["is_demo"])
         }
+
+async def find_file_by_message_id(message_id: int) -> Optional[Dict[str, Any]]:
+    """Find a file record by its primary telegram_message_id or extra_message_ids."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM files WHERE telegram_message_id = ?", (message_id,))
+        row = await cursor.fetchone()
+        if row:
+            return dict(row)
+        cursor = await db.execute("SELECT * FROM files WHERE extra_message_ids LIKE ?", (f"%{message_id}%",))
+        rows = await cursor.fetchall()
+        for r in rows:
+            raw_extra = r["extra_message_ids"] or ""
+            if str(message_id) in raw_extra:
+                return dict(r)
+        return None
 
 # ==================== OTP & SECURITY LOCKOUT ====================
 

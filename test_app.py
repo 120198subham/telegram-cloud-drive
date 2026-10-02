@@ -29,6 +29,7 @@ async def test_full_workspace_api():
         # 1. Status (Public)
         status_resp = await client.get("/api/status")
         assert status_resp.status_code == 200
+        assert "aes_ni_accelerated" in status_resp.json()
 
         # 2. Test unauthorized access
         unauth_resp = await client.get("/api/files")

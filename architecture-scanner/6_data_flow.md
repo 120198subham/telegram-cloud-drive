@@ -10,78 +10,91 @@ The local SQLite database is only a **lightweight index** — it stores names, s
 
 ---
 
-## 1. Data Lifecycle: File Upload
+## 1. Data Lifecycle: File Upload (Standard & Multi-GB Pixel Vault)
 
 ```mermaid
 sequenceDiagram
     participant BROWSER as Browser (User)
     participant FASTAPI as FastAPI Server (main.py)
-    participant TEMP as Temp Folder (uploads_temp/)
+    participant VAULT as Pixel Vault Engine
     participant TG_CLIENT as TelegramStorageClient
-    participant TG_CHANNEL as Telegram Channel 1
+    participant TG_CHANNEL as Telegram Channel 1 / 3
     participant SQLITE as SQLite (cloud_storage.db)
 
     BROWSER->>FASTAPI: POST /api/upload (multipart/form-data)
-    Note over BROWSER,FASTAPI: Auth cookie checked first
-    FASTAPI->>TEMP: Stream file in 1 MB chunks to disk<br/>(avoids loading full 2 GB into RAM)
-    FASTAPI->>FASTAPI: Reject if file > 2 GB (413 error)
-    FASTAPI->>TG_CLIENT: upload_file(temp_path, filename, category)
+    Note over BROWSER,FASTAPI: Auth cookie checked first (HEAD / GET allowed)
+    FASTAPI->>FASTAPI: Reject if file > 20 GB (413 error)
     
-    alt File > 10 MB
-        TG_CLIENT->>TG_CLIENT: fast_upload_file()<br/>Split into 512 KB parts
-        loop 6 workers in parallel
-            TG_CLIENT->>TG_CHANNEL: SaveBigFilePartRequest(file_id, part_index, bytes)
+    alt File Size > 1.9 GB (Pixel Vault Multi-GB Path)
+        FASTAPI->>VAULT: Stream bytes directly (zero disk staging)
+        VAULT->>VAULT: Segment stream into 1.0 GB chunks<br/>AES-256-CTR encrypt + wrap as PNG
+        loop For each 1.0 GB chunk
+            VAULT->>TG_CLIENT: fast_upload_file(chunk_stream)
+            loop 6 workers with 8-stage backoff
+                TG_CLIENT->>TG_CHANNEL: SaveBigFilePartRequest(file_id, part, 512KB)
+            end
+            TG_CLIENT->>TG_CHANNEL: send_file(Chunk PNG message)
+            TG_CHANNEL-->>TG_CLIENT: Chunk Message ID
         end
-    else File ≤ 10 MB
-        TG_CLIENT->>TG_CHANNEL: Standard upload_file() single stream
+        TG_CLIENT-->>FASTAPI: (primary_msg_id, [extra_chunk_ids], encryption_meta)
+        FASTAPI->>SQLITE: INSERT INTO files (..., is_encrypted=1, encryption_meta, extra_message_ids)
+    else File Size ≤ 1.9 GB (Standard Upload Path)
+        FASTAPI->>TG_CLIENT: upload_file(stream, filename, category)
+        alt File > 10 MB
+            TG_CLIENT->>TG_CLIENT: fast_upload_file() [6 workers × 512KB]
+        else File ≤ 10 MB
+            TG_CLIENT->>TG_CHANNEL: Standard upload_file()
+        end
+        TG_CHANNEL-->>TG_CLIENT: (message_id, channel_id)
+        TG_CLIENT-->>FASTAPI: (message_id, channel_id, None)
+        FASTAPI->>SQLITE: INSERT INTO files (..., is_encrypted=0)
     end
     
-    TG_CHANNEL-->>TG_CLIENT: All parts confirmed → InputFileBig handle
-    TG_CLIENT->>TG_CHANNEL: send_file(entity, InputFileBig, caption)<br/>Creates a new message with document attachment
-    TG_CHANNEL-->>TG_CLIENT: Message ID (integer) + Document ID
-    TG_CLIENT-->>FASTAPI: (message_id, channel_id, tg_file_id)
-    FASTAPI->>SQLITE: INSERT INTO files (uuid, filename, size, mime, category, message_id, channel_id)
-    FASTAPI->>TEMP: Delete temp file
     FASTAPI-->>BROWSER: 200 OK + file record JSON
 ```
 
 ---
 
-## 2. Data Lifecycle: File Download
+## 2. Data Lifecycle: File Download (RFC 7233 Resumption & Decryption)
 
 ```mermaid
 sequenceDiagram
-    participant BROWSER as Browser (User)
+    participant BROWSER as Browser / Downloader
     participant FASTAPI as FastAPI Server
     participant SQLITE as SQLite Index
     participant TG_CLIENT as TelegramStorageClient
+    participant VAULT as Pixel Vault Decryptor
     participant TG_DC as Telegram Data Center
 
-    BROWSER->>FASTAPI: GET /api/download/{uuid}
+    BROWSER->>FASTAPI: GET / HEAD /api/download/{uuid} (Range: bytes=start-end)
     FASTAPI->>SQLITE: SELECT * FROM files WHERE id = uuid
-    SQLITE-->>FASTAPI: filename, telegram_message_id, channel_id, size
+    SQLITE-->>FASTAPI: Record metadata (size, is_encrypted, msg_id, extra_ids)
 
-    FASTAPI->>TG_CLIENT: download_file_stream(message_id, filename, channel_id)
-    TG_CLIENT->>TG_DC: get_messages(channel_entity, message_id)
-    TG_DC-->>TG_CLIENT: Message object with media (document) attached
-    TG_CLIENT->>TG_CLIENT: Extract doc_size, location, dc_id
-
-    alt File > 10 MB (fast path)
-        TG_CLIENT->>TG_CLIENT: fast_download_stream()<br/>Bounded asyncio.Queue (max 12 chunks)
-        loop 6 workers in parallel
-            TG_CLIENT->>TG_DC: GetFileRequest(location, offset=N×512KB, limit=512KB)
-            TG_DC-->>TG_CLIENT: Bytes chunk at offset N
+    alt HEAD Request
+        FASTAPI-->>BROWSER: Instant 200 OK<br/>ETag, Accept-Ranges: bytes, Content-Length
+    else Range Out of Bounds (start >= size)
+        FASTAPI-->>BROWSER: HTTP 416 Range Not Satisfiable<br/>Content-Range: bytes */size
+    else Valid GET / Range Request
+        alt is_encrypted == 1 (Pixel Vault Stream)
+            FASTAPI->>TG_CLIENT: download_pixel_vault_stream(file_record, start, length)
+            TG_CLIENT->>VAULT: Initialize AES-256-CTR with chunk offset nonce
+            loop Chunk Fetching with Lookahead Prefetch
+                TG_CLIENT->>TG_DC: Fetch encrypted 1.0 GB PNG chunk parts
+                TG_DC-->>TG_CLIENT: Ciphertext bytes
+                VAULT->>VAULT: Strip PNG wrapper + on-the-fly AES decrypt
+                VAULT-->>FASTAPI: Yield plaintext byte chunks
+            end
+        else is_encrypted == 0 (Plain Telegram Stream)
+            FASTAPI->>TG_CLIENT: download_file_stream(message_id, channel_id)
+            alt File > 10 MB
+                TG_CLIENT->>TG_DC: fast_download_stream() (6 parallel workers)
+            else File ≤ 10 MB
+                TG_CLIENT->>TG_DC: iter_download() (1 MB chunks)
+            end
+            TG_DC-->>FASTAPI: Yield plaintext byte chunks
         end
-        TG_CLIENT->>TG_CLIENT: asyncio.Condition ordering<br/>yield chunk[0], chunk[1], chunk[2]... in strict sequence
-    else File ≤ 10 MB (simple path)
-        TG_CLIENT->>TG_DC: iter_download(media, chunk_size=1MB)
-        TG_DC-->>TG_CLIENT: Sequential 1 MB byte chunks
+        FASTAPI-->>BROWSER: HTTP 206 Partial Content (or 200 OK)<br/>Content-Range: bytes start-end/size<br/>ETag, Accept-Ranges, StreamingResponse
     end
-
-    TG_CLIENT-->>FASTAPI: Async generator of byte chunks
-    FASTAPI-->>BROWSER: StreamingResponse (HTTP chunked transfer)<br/>Content-Disposition: attachment; filename=...
-    Note over BROWSER: Browser saves file to Downloads
-```
 
 ---
 

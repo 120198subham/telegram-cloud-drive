@@ -19,8 +19,10 @@ def get_env_int(key: str, default: int = 0) -> int:
 API_ID: int = get_env_int("TELEGRAM_API_ID", get_env_int("API_ID", 0))
 API_HASH: str = os.getenv("TELEGRAM_API_HASH", os.getenv("API_HASH", "")).strip()
 
-# Bot Token from @BotFather
-BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", os.getenv("BOT_TOKEN", "")).strip()
+# Bot Token(s) from @BotFather
+_tokens_raw = os.getenv("TELEGRAM_BOT_TOKENS", os.getenv("TELEGRAM_BOT_TOKEN", os.getenv("BOT_TOKEN", "")))
+BOT_TOKENS: list[str] = [t.strip() for t in _tokens_raw.split(",") if t.strip()]
+BOT_TOKEN: str = BOT_TOKENS[0] if BOT_TOKENS else ""
 
 # The target private channel ID where files (files/photos/videos) are stored
 CHANNEL_ID: int = get_env_int("TELEGRAM_CHANNEL_ID", get_env_int("CHANNEL_ID", 0))
@@ -49,9 +51,9 @@ ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "").strip()
 # Telethon session file name
 SESSION_NAME: str = os.getenv("TELEGRAM_SESSION_NAME", "telegram_cloud_session")
 
-# Maximum upload limit: exactly 2 GB in bytes (Telegram standard MTProto limit)
-# 2 * 1024 * 1024 * 1024 = 2,147,483,648 bytes
-MAX_FILE_SIZE: int = get_env_int("MAX_FILE_SIZE", 2 * 1024 * 1024 * 1024)
+# Maximum upload limit: 20 GB in bytes (multi-GB files automatically chunked into Pixel Vault PNGs)
+# 20 * 1024 * 1024 * 1024 = 21,474,836,480 bytes
+MAX_FILE_SIZE: int = get_env_int("MAX_FILE_SIZE", 20 * 1024 * 1024 * 1024)
 
 # Directory configurations
 UPLOAD_DIR: Path = BASE_DIR / "uploads_temp"

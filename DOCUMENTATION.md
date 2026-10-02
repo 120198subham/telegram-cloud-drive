@@ -284,3 +284,86 @@ Tailscale automatically provisions a real, trusted **Let's Encrypt SSL certifica
 ### Issue 3: Telegram `FloodWaitError`
 - **Cause**: Uploading or downloading dozens of files in rapid succession triggers Telegram's rate-limiting.
 - **Fix**: Telethon automatically waits if small rate limits occur; for heavy use, upload files sequentially rather than in parallel.
+
+---
+
+## 7. Multi-GB Pixel Vault Cryptographic Specification & Streaming Architecture
+
+### 7.1 Architecture & Cryptographic Design
+
+Telegram MTProto enforces a strict single-file document limit of **2.0 GB** (2,147,483,648 bytes). To safely support **files up to 20 GB** while maintaining absolute binary fidelity and zero data loss, the system incorporates the **Pixel Vault Streaming Engine** (`pixel_vault.py`).
+
+```
+[20 GB Source File]
+         │
+         ▼ (Threshold: > 1.9 GB)
+[Direct Ingestion Stream] ── 64 KB Blocks ──► [AES-256-CTR Keystream]
+                                                       │
+                           ┌───────────────────────────┴───────────────────────────┐
+                           ▼                                                       ▼
+                [Chunk 1: 1.0 GB]                                       [Chunk 2: 1.0 GB]
+             (compress_level=0 PNG)                                  (compress_level=0 PNG)
+                           │                                                       │
+                           ▼                                                       ▼
+                [MTProto Upload Ch 1]                                   [MTProto Upload Ch 1]
+             (Message ID: 101, Doc ID)                               (Message ID: 102, Doc ID)
+```
+
+1. **Threshold & Chunking**:
+   - Files $\le 1.9\text{ GB}$ are uploaded directly as single native MTProto documents.
+   - Files $> 1.9\text{ GB}$ are partitioned into sequential **1.0 GB chunks** (`PIXEL_VAULT_CHUNK_SIZE = 1000 * 1024 * 1024`).
+2. **AES-256-CTR Streaming Cipher**:
+   - A cryptographically secure 256-bit key (32 bytes) and 128-bit initial counter/nonce (16 bytes) are generated per upload (`secrets.token_bytes`).
+   - The cipher maintains a **continuous keystream** across all sequential chunks, ensuring bit-for-bit reconstruction upon playback or download.
+3. **PNG Binary Encapsulation (`compress_level=0`)**:
+   - Raw encrypted bytes are packaged into standard RFC 2083 PNG structures (`IHDR`, `IDAT`, `IEND`).
+   - Using uncompressed deflate blocks (`compress_level=0`) eliminates CPU-intensive compression cycles, achieving transfer speeds limited only by network I/O.
+4. **Metadata Cataloging**:
+   - In SQLite `files`: `is_encrypted=1`, `extra_message_ids='102,103...'`, and `encryption_meta={"key": "...", "nonce": "...", "chunks": [101, 102], "chunk_filenames": [...]}`.
+
+---
+
+### 7.2 Multi-GB Streaming & Resumption Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as Web Browser / Client
+    participant FastAPI as FastAPI Server (main.py)
+    participant Telemetry as Telemetry Recorder
+    participant PV as Pixel Vault Engine (pixel_vault.py)
+    participant TG as MTProto Client (telegram_client.py)
+    participant Cloud as Telegram Datacenters
+
+    Note over Client, Cloud: 1. Multi-GB Download Request with Range Header
+    Client->>FastAPI: GET /api/download/{id} (Range: bytes=0-1048575 or full)
+    FastAPI->>FastAPI: Check RFC 7233 Headers (ETag, Accept-Ranges: bytes)
+    FastAPI->>TG: download_pixel_vault_stream(file_record, download_id)
+
+    Note over TG, PV: 2. Pipelined Prefetching & On-the-Fly Decryption (< 15 MB RAM)
+    loop For each chunk message ID (1.0 GB each)
+        TG->>Cloud: Fetch MTProto document (caching in uploads_temp)
+        Cloud-->>TG: Complete encrypted PNG chunk
+        TG->>PV: stream_unpack_png_file() + AES-256-CTR update()
+        PV-->>TG: Decrypted raw byte blocks (64 KB)
+        TG->>Telemetry: Record throughput & RAM metrics
+        TG-->>FastAPI: Yield decrypted stream bytes
+        FastAPI-->>Client: HTTP 206 / 200 chunk stream
+        TG->>TG: Immediately purge local temp chunk from disk
+    end
+
+    Note over Client, FastAPI: 3. EOF Probing & Range Completion
+    Client->>FastAPI: HEAD /api/download/{id} (Probe)
+    FastAPI-->>Client: 200 OK (Content-Length, ETag, Accept-Ranges)
+    Client->>FastAPI: GET /api/download/{id} (Range: bytes=EOF-)
+    FastAPI-->>Client: 416 Range Not Satisfiable (Content-Range: bytes */size, ETag)
+```
+
+---
+
+### 7.3 Memory Efficiency Guarantee
+
+The pipeline operates strictly with bounded streaming queues:
+- **Max Memory Footprint**: Strictly $< 15\text{ MB}$ RAM during multi-GB transfers.
+- **Lookahead Prefetching**: Exactly 1 chunk lookahead (`asyncio.Queue(maxsize=1)`) overlaps network downloading with HTTP client transmission without exhausting disk or memory.
+- **Automatic Garbage Collection**: Unpacked chunks are purged from disk immediately upon completion of their streaming byte range.

@@ -404,7 +404,7 @@
                             <i data-lucide="file-up" class="w-6 h-6"></i>
                         </div>
                         <h3 class="text-sm sm:text-base font-semibold" style="color: var(--text-primary);">Tap to Upload Documents & Files</h3>
-                        <p class="text-xs" style="color: var(--text-secondary);">PDFs, ZIPs, docs up to <strong>2 GB</strong></p>
+                        <p class="text-xs" style="color: var(--text-secondary);">PDFs, ZIPs, ISOs, archives & documents</p>
                     </div>
                 </div>
 
@@ -457,7 +457,7 @@
                             <i data-lucide="video" class="w-6 h-6"></i>
                         </div>
                         <h3 class="text-sm sm:text-base font-semibold" style="color: var(--text-primary);">Tap to Upload Videos</h3>
-                        <p class="text-xs" style="color: var(--text-secondary);">MP4, MOV, MKV up to <strong>2 GB</strong></p>
+                        <p class="text-xs" style="color: var(--text-secondary);">MP4, MOV, MKV, AVI (Original lossless quality)</p>
                     </div>
                 </div>
 
@@ -542,7 +542,7 @@
                         </div>
                         <div class="min-w-0 flex-1">
                             <h4 id="uploadFileName" class="text-xs sm:text-sm font-semibold truncate" style="color: var(--text-primary);">Uploading...</h4>
-                            <span id="uploadTotalSize" class="text-[11px] font-mono" style="color: var(--text-secondary);">0.0 MB total</span>
+                            <div class="flex items-center space-x-2"><span id="uploadTotalSize" class="text-[11px] font-mono" style="color: var(--text-secondary);">0.0 MB total</span><span id="uploadTimerBadge" class="text-[10px] font-mono font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">00:00</span></div>
                         </div>
                     </div>
                     <button id="cancelUploadBtn" class="text-xs px-2.5 py-1 bg-red-500/15 hover:bg-red-500/25 text-red-500 border border-red-500/30 rounded-lg shrink-0 transition">Cancel</button>
@@ -719,32 +719,66 @@
         </div>
     </div>
 
-    <!-- Floating Download Live Progress Card -->
+    <!-- Floating Download Live Progress Card (2 Bars + Single Timer) -->
     <div id="downloadToast" class="fixed bottom-20 sm:bottom-6 right-3 sm:right-6 z-50 transition-all duration-300 transform translate-y-10 opacity-0 pointer-events-none max-w-sm w-[calc(100%-1.5rem)] sm:w-96">
         <div class="glass p-3.5 sm:p-4 rounded-2xl border border-sky-500/40 shadow-2xl space-y-2.5" style="background-color: var(--card-bg);">
+            <!-- Header with Title, Filename, Timer & Total % -->
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2.5 min-w-0 flex-1 mr-2">
                     <div id="downloadToastIconBox" class="w-8 h-8 rounded-xl bg-sky-500/20 text-sky-500 flex items-center justify-center shrink-0">
                         <i data-lucide="loader-2" class="w-4 h-4 animate-spin" id="downloadToastSpinner"></i>
                     </div>
                     <div class="min-w-0 flex-1">
-                        <h5 class="font-semibold text-xs sm:text-sm truncate" id="downloadToastTitle" style="color: var(--text-primary);">Downloading from Telegram...</h5>
-                        <p class="text-[11px] truncate font-medium" id="downloadToastFilename" style="color: var(--text-secondary);"></p>
+                        <h5 class="font-semibold text-xs sm:text-sm truncate" id="downloadToastTitle" style="color: var(--text-primary);">Downloading & Processing...</h5>
+                        <p class="text-[11px] truncate font-medium text-sky-400" id="downloadToastFilename"></p>
                     </div>
                 </div>
-                <div class="text-right shrink-0">
+                <div class="text-right shrink-0 flex flex-col items-end">
                     <span id="downloadToastPercent" class="font-mono font-bold text-xs sm:text-sm text-sky-500">0%</span>
+                    <span id="downloadTimerBadge" class="text-[10px] font-mono font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20 mt-0.5">00:00</span>
                 </div>
             </div>
 
-            <!-- Progress Bar -->
-            <div class="w-full rounded-full h-2 overflow-hidden" style="background-color: var(--subtle-bg);">
-                <div id="downloadToastBar" class="bg-gradient-to-r from-sky-500 to-blue-500 h-2 rounded-full transition-all duration-100" style="width: 0%"></div>
+            <!-- Stage 1: Telegram Cloud -> Data Chunks -->
+            <div class="p-2.5 rounded-xl border space-y-1.5" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                <div class="flex items-center justify-between text-[11px]">
+                    <span class="font-medium flex items-center space-x-1" style="color: var(--text-primary);">
+                        <span class="w-1.5 h-1.5 rounded-full bg-sky-500 inline-block"></span>
+                        <span>1. Telegram Cloud ➔ Data Chunks</span>
+                    </span>
+                    <div class="flex items-center space-x-1.5 font-mono">
+                        <span id="downloadStage1Speed" class="text-[10px] text-sky-400">0.0 MB/s</span>
+                        <span id="downloadStage1Percent" class="font-bold text-sky-500">0%</span>
+                    </div>
+                </div>
+                <div class="w-full rounded-full h-1.5 overflow-hidden" style="background-color: var(--card-bg);">
+                    <div id="downloadToastBar" class="bg-gradient-to-r from-sky-500 to-blue-500 h-1.5 rounded-full transition-all duration-100" style="width: 0%"></div>
+                </div>
+                <div class="flex items-center justify-between text-[10px]" style="color: var(--text-secondary);">
+                    <span id="downloadToastDetails" class="font-mono">0.0 MB / 0.0 MB</span>
+                    <span id="downloadToastStatus" class="font-medium text-sky-400">Streaming from Telegram Vault</span>
+                </div>
             </div>
 
-            <div class="flex items-center justify-between text-[11px]" style="color: var(--text-secondary);">
-                <span id="downloadToastDetails" class="font-mono">0.0 MB / 0.0 MB</span>
-                <span id="downloadToastStatus" class="font-medium text-emerald-500">Active</span>
+            <!-- Stage 2: On-the-Fly Processing -->
+            <div class="p-2.5 rounded-xl border space-y-1.5" style="background-color: var(--subtle-bg); border-color: var(--subtle-border);">
+                <div class="flex items-center justify-between text-[11px]">
+                    <span class="font-medium flex items-center space-x-1" style="color: var(--text-primary);">
+                        <span id="downloadDecryptDot" class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                        <span>2. On-the-Fly Processing</span>
+                    </span>
+                    <div class="flex items-center space-x-1.5 font-mono">
+                        <span id="downloadDecryptSpeed" class="text-[10px] text-emerald-400">Optimized Stream</span>
+                        <span id="downloadDecryptPercent" class="font-bold text-emerald-400">0%</span>
+                    </div>
+                </div>
+                <div class="w-full rounded-full h-1.5 overflow-hidden" style="background-color: var(--card-bg);">
+                    <div id="downloadDecryptBar" class="bg-gradient-to-r from-emerald-500 to-teal-500 h-1.5 rounded-full transition-all duration-150" style="width: 0%"></div>
+                </div>
+                <div class="flex items-center justify-between text-[10px]" style="color: var(--text-secondary);">
+                    <span id="downloadDecryptDetails" class="font-mono">Processed: 0.0 MB / 0.0 MB</span>
+                    <span id="downloadDecryptStatus" class="font-medium text-emerald-400 font-mono">Lossless Bit-for-Bit</span>
+                </div>
             </div>
         </div>
     </div>
@@ -1393,20 +1427,36 @@
             const toastStatus = document.getElementById('downloadToastStatus');
             const toastIconBox = document.getElementById('downloadToastIconBox');
 
-            if (toastTitle) toastTitle.textContent = isSoftware ? "Downloading Software..." : "Downloading from Telegram...";
+            const s1Speed = document.getElementById('downloadStage1Speed');
+            const s1Percent = document.getElementById('downloadStage1Percent');
+            const s2Bar = document.getElementById('downloadDecryptBar');
+            const s2Percent = document.getElementById('downloadDecryptPercent');
+            const s2Details = document.getElementById('downloadDecryptDetails');
+            const s2Status = document.getElementById('downloadDecryptStatus');
+            const timerBadge = document.getElementById('downloadTimerBadge');
+
+            const formattedTotalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) + " MB" : "...";
+
+            if (toastTitle) toastTitle.textContent = isSoftware ? "Downloading Software..." : "Downloading & Processing...";
             if (toastFilename) toastFilename.textContent = filename || "File";
             if (toastPercent) toastPercent.textContent = "0%";
+            if (timerBadge) timerBadge.textContent = "00:00";
             if (toastBar) {
                 toastBar.style.width = "0%";
-                toastBar.className = "bg-gradient-to-r from-sky-500 to-blue-500 h-2 rounded-full transition-all duration-100";
+                toastBar.className = "bg-gradient-to-r from-sky-500 to-blue-500 h-1.5 rounded-full transition-all duration-100";
             }
-            if (toastDetails) {
-                const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) + " MB" : "...";
-                toastDetails.textContent = `0.0 MB / ${totalMB}`;
+            if (s2Bar) {
+                s2Bar.style.width = "0%";
+                s2Bar.className = "bg-gradient-to-r from-emerald-500 to-teal-500 h-1.5 rounded-full transition-all duration-150";
             }
+            if (toastDetails) toastDetails.textContent = `0.0 MB / ${formattedTotalMB}`;
+            if (s2Details) s2Details.textContent = `Processed: 0.0 MB / ${formattedTotalMB}`;
+            if (s1Percent) s1Percent.textContent = "0%";
+            if (s2Percent) s2Percent.textContent = "0%";
+            if (s1Speed) s1Speed.textContent = "0.0 MB/s";
             if (toastStatus) {
-                toastStatus.textContent = "Connecting...";
-                toastStatus.className = "font-medium text-sky-500";
+                toastStatus.textContent = "Connecting to Telegram...";
+                toastStatus.className = "font-medium text-sky-400";
             }
             if (toastIconBox) {
                 toastIconBox.className = "w-8 h-8 rounded-xl bg-sky-500/20 text-sky-500 flex items-center justify-center shrink-0";
@@ -1419,11 +1469,23 @@
                 toast.classList.add('opacity-100', 'translate-y-0');
             }
 
+            // START TIMER IMMEDIATELY ON CLICK
+            const dlStartTime = Date.now();
+            const dlTimerInterval = setInterval(() => {
+                const el = document.getElementById('downloadTimerBadge');
+                if (el) {
+                    const elapsed = Math.floor((Date.now() - dlStartTime) / 1000);
+                    const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+                    const s = String(elapsed % 60).padStart(2, '0');
+                    el.textContent = `${m}:${s}`;
+                }
+            }, 1000);
+
             // 4. Start XHR download with real-time progress callbacks
             const downloadUrl = `/api/download/${fileId}`;
 
             const xhr = new XMLHttpRequest();
-            activeDownloads[fileId] = { xhr, filename, totalBytes };
+            activeDownloads[fileId] = { xhr, filename, totalBytes, dlTimerInterval };
 
             xhr.open('GET', downloadUrl, true);
             xhr.responseType = 'blob';
@@ -1431,6 +1493,9 @@
             if (sessionToken && !isSoftware) {
                 xhr.setRequestHeader('X-Session-Token', sessionToken);
             }
+
+            let lastDlTime = Date.now();
+            let lastDlLoaded = 0;
 
             xhr.onprogress = (e) => {
                 let currentTotal = totalBytes;
@@ -1442,6 +1507,16 @@
                     percent = Math.min(99, Math.round((e.loaded / currentTotal) * 100));
                 }
 
+                const now = Date.now();
+                const dt = (now - lastDlTime) / 1000;
+                if (dt >= 0.3) {
+                    const bytesPerSec = (e.loaded - lastDlLoaded) / dt;
+                    const mbps = (bytesPerSec / (1024 * 1024)).toFixed(1);
+                    if (s1Speed) s1Speed.textContent = `${mbps} MB/s`;
+                    lastDlTime = now;
+                    lastDlLoaded = e.loaded;
+                }
+
                 // Live % upon the file icon
                 const iconPercent = document.getElementById(`fileIconPercent-${fileId}`);
                 if (iconPercent) iconPercent.textContent = `${percent}%`;
@@ -1450,20 +1525,22 @@
                 const btnPercent = document.getElementById(`btnPercent-${fileId}`);
                 if (btnPercent) btnPercent.textContent = `${percent}%`;
 
-                // Live % and progress bar on floating card
+                // Live % and multi-stage progress bars
                 if (toastPercent) toastPercent.textContent = `${percent}%`;
                 if (toastBar) toastBar.style.width = `${percent}%`;
-                if (toastDetails) {
-                    const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
-                    const totalMB = currentTotal > 0 ? (currentTotal / (1024 * 1024)).toFixed(1) : '?';
-                    toastDetails.textContent = `${loadedMB} MB / ${totalMB} MB`;
-                }
-                if (toastStatus) {
-                    toastStatus.textContent = "Downloading";
-                }
+                if (s1Percent) s1Percent.textContent = `${percent}%`;
+                if (s2Bar) s2Bar.style.width = `${percent}%`;
+                if (s2Percent) s2Percent.textContent = `${percent}%`;
+
+                const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
+                const totalMB = currentTotal > 0 ? (currentTotal / (1024 * 1024)).toFixed(1) : '?';
+                if (toastDetails) toastDetails.textContent = `${loadedMB} MB / ${totalMB} MB`;
+                if (s2Details) s2Details.textContent = `Processed: ${loadedMB} MB / ${totalMB} MB`;
+                if (toastStatus) toastStatus.textContent = "Streaming from Telegram Vault";
             };
 
             xhr.onload = () => {
+                clearInterval(dlTimerInterval);
                 if (xhr.status >= 200 && xhr.status < 300) {
                     const blob = xhr.response;
                     const finalSize = blob ? blob.size : totalBytes;
@@ -1493,14 +1570,21 @@
                     // 100% on Floating Card
                     if (toastTitle) toastTitle.textContent = "Download Complete!";
                     if (toastPercent) toastPercent.textContent = "100%";
+                    if (s1Percent) s1Percent.textContent = "100%";
+                    if (s2Percent) s2Percent.textContent = "100%";
                     if (toastBar) {
                         toastBar.style.width = "100%";
-                        toastBar.className = "bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full transition-all duration-150";
+                        toastBar.className = "bg-gradient-to-r from-emerald-500 to-teal-500 h-1.5 rounded-full transition-all duration-150";
+                    }
+                    if (s2Bar) {
+                        s2Bar.style.width = "100%";
+                        s2Bar.className = "bg-emerald-500 h-1.5 rounded-full transition-all duration-150";
                     }
                     if (toastDetails) toastDetails.textContent = `${finalMB} MB / ${finalMB} MB`;
+                    if (s2Details) s2Details.textContent = `Processed: ${finalMB} MB / ${finalMB} MB`;
                     if (toastStatus) {
-                        toastStatus.textContent = "Completed";
-                        toastStatus.className = "font-medium text-emerald-500";
+                        toastStatus.textContent = "Completed ✓";
+                        toastStatus.className = "font-medium text-emerald-400";
                     }
                     if (toastIconBox) {
                         toastIconBox.className = "w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0";
@@ -1521,7 +1605,7 @@
                         window.URL.revokeObjectURL(blobUrl);
                     }, 20000);
 
-                    // Don't remove till download completed: keep visible for 2.2s then cleanly dismiss
+                    // Keep visible for 2.5s then cleanly dismiss
                     setTimeout(() => {
                         const ov = document.getElementById(`fileIconOverlay-${fileId}`);
                         if (ov) {
@@ -1539,16 +1623,17 @@
                         if (toast) {
                             toast.classList.remove('opacity-100', 'translate-y-0');
                             toast.classList.add('opacity-0', 'pointer-events-none', 'translate-y-10');
-                            if (toastBar) toastBar.className = "bg-gradient-to-r from-sky-500 to-blue-500 h-2 rounded-full transition-all duration-150";
                         }
                         delete activeDownloads[fileId];
-                    }, 2200);
+                    }, 2500);
                 } else {
+                    clearInterval(dlTimerInterval);
                     handleDownloadError(fileId, btnElement, "Download failed (Server returned " + xhr.status + ")");
                 }
             };
 
             xhr.onerror = () => {
+                clearInterval(dlTimerInterval);
                 handleDownloadError(fileId, btnElement, "Network error during download");
             };
 
@@ -1777,16 +1862,65 @@
                     <div class="flex items-center justify-between text-xs pt-1 min-w-0">
                         <div class="min-w-0 flex-1 mr-2 overflow-hidden">
                             <h4 class="font-medium truncate text-xs sm:text-sm" style="color: var(--text-primary);" title="${escapeHtml(v.filename)}">${escapeHtml(v.filename)}</h4>
-                            <span class="text-[11px] font-mono" style="color: var(--text-secondary);">${v.size_formatted}</span>
+                            <div class="flex items-center space-x-2 text-[11px] font-mono mt-0.5" style="color: var(--text-secondary);">
+                                <span>${v.size_formatted}</span>
+                                <span>•</span>
+                                <span class="text-emerald-400 font-sans text-[10px]">VLC Ready</span>
+                            </div>
                         </div>
-                        <div class="flex items-center space-x-1.5 shrink-0">
-                            <button id="downloadBtn-${v.id}" data-id="${v.id}" data-name="${escapeHtml(v.filename)}" data-size="${v.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1.5 rounded-lg bg-sky-500/15 text-sky-500 hover:bg-sky-500/25 transition flex items-center justify-center" title="Download Video"><i data-lucide="download" class="w-3.5 h-3.5"></i></button>
+                        <div class="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
+                            <button onclick="openInVlc('${v.id}', '${escapeHtml(v.filename)}')" class="p-1.5 rounded-lg bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 transition flex items-center justify-center" title="Stream in VLC (.m3u)"><i data-lucide="play-circle" class="w-3.5 h-3.5"></i></button>
+                            <button onclick="copyStreamLink('${v.id}')" class="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25 transition flex items-center justify-center" title="Copy VLC/MPV Stream Link"><i data-lucide="link-2" class="w-3.5 h-3.5"></i></button>
+                            <button id="downloadBtn-${v.id}" data-id="${v.id}" data-name="${escapeHtml(v.filename)}" data-size="${v.size || 0}" onclick="handleDownloadClick(this, false)" class="p-1.5 rounded-lg bg-sky-500/15 text-sky-500 hover:bg-sky-500/25 transition flex items-center justify-center" title="Download Video File"><i data-lucide="download" class="w-3.5 h-3.5"></i></button>
                             <button data-id="${v.id}" data-name="${escapeHtml(v.filename)}" onclick="handleDeleteFileClick(this, 'video')" class="p-1.5 rounded-lg bg-red-500/15 text-red-500 hover:bg-red-500/25 transition" title="Delete Video"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                         </div>
                     </div>
                 </div>
             `).join('');
             refreshIcons();
+        }
+
+        function getDirectStreamUrl(fileId) {
+            const token = localStorage.getItem('session_token');
+            const baseUrl = `${window.location.origin}/api/download/${fileId}`;
+            return token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+        }
+
+        function copyStreamLink(fileId) {
+            const url = getDirectStreamUrl(fileId);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(() => {
+                    showToast("Stream link copied! In VLC press Ctrl+N and paste.", "success");
+                }).catch(() => {
+                    prompt("Copy stream URL for VLC / MPV / PotPlayer:", url);
+                });
+            } else {
+                prompt("Copy stream URL for VLC / MPV / PotPlayer:", url);
+            }
+        }
+
+        function openInVlc(fileId, filename = 'video') {
+            const streamUrl = getDirectStreamUrl(fileId);
+            
+            // 1. Generate & download .m3u stream playlist file (VLC auto-associates with .m3u)
+            const m3uContent = `#EXTM3U\n#EXTINF:-1,${filename}\n${streamUrl}\n`;
+            const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `${filename.replace(/\.[^/.]+$/, "")}.m3u`;
+            document.body.appendChild(link);
+            link.click();
+            setTimeout(() => {
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+            }, 10000);
+
+            // 2. Also copy stream link to clipboard for convenience
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(streamUrl).catch(() => {});
+            }
+
+            showToast("Downloaded .m3u stream! Click to play in VLC.", "success");
         }
 
         function triggerUpload(category) {
@@ -1832,6 +1966,17 @@
                 const tempElapsed = document.getElementById('tempElapsedTime');
                 const tempRemaining = document.getElementById('tempEstimatedRemaining');
                 let uploadStartTime = Date.now();
+                const upTimerBadge = document.getElementById('uploadTimerBadge');
+                if (upTimerBadge) upTimerBadge.textContent = "00:00";
+                const upTimerInterval = setInterval(() => {
+                    const badge = document.getElementById('uploadTimerBadge');
+                    if (badge) {
+                        const elapsed = Math.floor((Date.now() - uploadStartTime) / 1000);
+                        const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+                        const s = String(elapsed % 60).padStart(2, '0');
+                        badge.textContent = `${m}:${s}`;
+                    }
+                }, 1000);
 
                 const totalMB = (file.size / (1024 * 1024)).toFixed(1);
                 const uploadId = (typeof crypto !== 'undefined' && crypto.randomUUID) 
@@ -1863,6 +2008,7 @@
 
                 let pollInterval = null;
                 const stopPolling = () => {
+                    try { if (typeof upTimerInterval !== 'undefined') clearInterval(upTimerInterval); } catch(e){}
                     if (pollInterval) {
                         clearInterval(pollInterval);
                         pollInterval = null;
