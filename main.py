@@ -937,6 +937,8 @@ async def upload_file(
 
         return {**file_record, "telemetry": telemetry_analysis}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[UPLOAD ERROR] {safe_filename} failed: {e}", exc_info=True)
         if uid:
@@ -949,7 +951,7 @@ async def upload_file(
                 "eta_seconds": 0,
                 "status": f"error: {str(e)}"
             }
-        raise
+        raise HTTPException(status_code=500, detail=f"Upload processing failed: {str(e)}")
 
     finally:
         if temp_path.exists():

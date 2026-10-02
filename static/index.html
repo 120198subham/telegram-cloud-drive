@@ -2206,7 +2206,21 @@
                         lockApp();
                         resolve();
                     } else {
-                        alert('Upload failed: ' + (xhr.responseText || 'Server error'));
+                        let errMsg = 'Server error (' + xhr.status + ')';
+                        try {
+                            const parsed = JSON.parse(xhr.responseText);
+                            if (parsed && parsed.detail) {
+                                errMsg = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail);
+                            }
+                        } catch(e) {
+                            if (xhr.responseText && xhr.responseText.includes('<title>')) {
+                                const m = xhr.responseText.match(/<title>([^<]+)<\/title>/i);
+                                if (m) errMsg = m[1].trim() + ' (' + xhr.status + ')';
+                            } else if (xhr.responseText && xhr.responseText.length < 200) {
+                                errMsg = xhr.responseText;
+                            }
+                        }
+                        alert('Upload failed: ' + errMsg);
                         card.classList.add('hidden');
                         resolve();
                     }
