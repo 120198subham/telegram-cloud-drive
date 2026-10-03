@@ -39,6 +39,5 @@ fix_consumer.py
 fix_init.py
 scratch_update.py
 speed_tracker.py
-telemetry_recorder.py
-pixel_vault.py
 ERROR_LOG.txt
+
